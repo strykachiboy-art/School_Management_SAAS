@@ -1,24 +1,25 @@
 from datetime import date, time
 import pytest
 
-from school_app import create_app
-from school_app.extensions import db as _db, limiter, redis_client
-from school_app.models.academic_session import AcademicSession
-from school_app.models.classroom import Classroom
-from school_app.models.exam import Exam
-from school_app.models.result import Result
-from school_app.models.student import Student
-from school_app.models.subject import Subject
-from school_app.models.teacher import Teacher
-from school_app.models.user import User
-from school_app.models.timetable import Timetable
-from school_app.models.parent_guardian import ParentGuardian
-from school_app.enums.attendance import AttendanceStatus
-from school_app.enums.day_of_week import DayOfWeek
-from school_app.models.attendance import Attendance
-from school_app.models.term import Term 
-from school_app.models.notification import Notification
-from school_app.enums.notification import NotificationType
+from src.school_app import create_app
+from src.school_app.extensions import db as _db, limiter, redis_client
+from src.school_app.models.academic_session import AcademicSession
+from src.school_app.models.classroom import Classroom
+from src.school_app.models.exam import Exam
+from src.school_app.models.result import Result
+from src.school_app.models.school import School
+from src.school_app.models.student import Student
+from src.school_app.models.subject import Subject
+from src.school_app.models.teacher import Teacher
+from src.school_app.models.user import User
+from src.school_app.models.timetable import Timetable
+from src.school_app.models.parent_guardian import ParentGuardian
+from src.school_app.enums.attendance import AttendanceStatus
+from src.school_app.enums.day_of_week import DayOfWeek
+from src.school_app.models.attendance import Attendance
+from src.school_app.models.term import Term
+from src.school_app.models.notification import Notification
+from src.school_app.enums.notification import NotificationType
 
 
 # ----------------------------------------------------------------------
@@ -56,6 +57,18 @@ def db(app):
 def db_session(app, db):
     """Provides convenient access to db.session."""
     return db.session
+
+
+@pytest.fixture(scope="function")
+def school(app):
+    """Creates a default tenant School that other fixtures attach to."""
+    with app.app_context():
+        s = School(name="Test School", slug="test-school")
+        _db.session.add(s)
+        _db.session.commit()
+        _db.session.refresh(s)
+        _db.session.expunge(s)
+        return s
 
 
 @pytest.fixture(autouse=True)
@@ -245,13 +258,14 @@ def sample_present_attendance(make_attendance, student, term):
 
 @pytest.fixture
 def make_user(app):
-    def _make(suffix="1", role="student"):
+    def _make(suffix="1", role="student", school_id=None):
         with app.app_context():
             user = User(
                 username=f"user_{suffix}",
                 email=f"user_{suffix}@example.com",
                 password="hashed-placeholder",
                 role=role,
+                school_id=school_id,
             )
             _db.session.add(user)
             _db.session.commit()
@@ -262,7 +276,7 @@ def make_user(app):
 
 
 @pytest.fixture
-def make_teacher(app):
+def make_teacher(app, school):
     def _make(suffix="1"):
         with app.app_context():
             user = User(
@@ -270,11 +284,12 @@ def make_teacher(app):
                 email=f"teacher_{suffix}@example.com",
                 password="hashed-placeholder",
                 role="teacher",
+                school_id=school.id,
             )
             _db.session.add(user)
             _db.session.commit()
 
-            teacher = Teacher(user_id=user.id, full_name=f"Teacher {suffix}")
+            teacher = Teacher(user_id=user.id, full_name=f"Teacher {suffix}", school_id=school.id)
             _db.session.add(teacher)
             _db.session.commit()
             _db.session.refresh(teacher)
@@ -290,7 +305,7 @@ def sample_teacher(teacher):
 
 
 @pytest.fixture
-def make_student(app):
+def make_student(app, school):
     def _make(suffix="1"):
         with app.app_context():
             user = User(
@@ -298,11 +313,12 @@ def make_student(app):
                 email=f"student_{suffix}@example.com",
                 password="hashed-placeholder",
                 role="student",
+                school_id=school.id,
             )
             _db.session.add(user)
             _db.session.commit()
 
-            student = Student(user_id=user.id, full_name=f"Student {suffix}")
+            student = Student(user_id=user.id, full_name=f"Student {suffix}", school_id=school.id)
             _db.session.add(student)
             _db.session.commit()
             _db.session.refresh(student)
@@ -312,7 +328,7 @@ def make_student(app):
 
 
 @pytest.fixture
-def make_parent(app):
+def make_parent(app, school):
     def _make(suffix="1"):
         with app.app_context():
             user = User(
@@ -320,6 +336,7 @@ def make_parent(app):
                 email=f"parent_{suffix}@example.com",
                 password="hashed-placeholder",
                 role="parent",
+                school_id=school.id,
             )
             _db.session.add(user)
             _db.session.commit()
@@ -329,7 +346,8 @@ def make_parent(app):
                 occupation=f"Profession {suffix}",
                 email=f"parent_{suffix}@example.com",
                 phone="08012345678",
-                address="123 Test Street"
+                address="123 Test Street",
+                school_id=school.id,
             )
             _db.session.add(parent)
             _db.session.commit()
@@ -340,10 +358,10 @@ def make_parent(app):
 
 
 @pytest.fixture
-def make_classroom(app):
+def make_classroom(app, school):
     def _make(suffix="1"):
         with app.app_context():
-            classroom = Classroom(name=f"Room {suffix}", capacity=30)
+            classroom = Classroom(name=f"Room {suffix}", capacity=30, school_id=school.id)
             _db.session.add(classroom)
             _db.session.commit()
             _db.session.refresh(classroom)
@@ -468,9 +486,9 @@ def subject(app):
 
 
 @pytest.fixture
-def classroom(app):
+def classroom(app, school):
     with app.app_context():
-        cls = Classroom(name="Room A", capacity=30)
+        cls = Classroom(name="Room A", capacity=30, school_id=school.id)
         _db.session.add(cls)
         _db.session.commit()
         _db.session.refresh(cls)
@@ -560,7 +578,7 @@ def auth_headers(app):
 
 
 @pytest.fixture(scope="function")
-def admin_headers(app, db_session):
+def admin_headers(app, db_session, school):
     from flask_jwt_extended import create_access_token
 
     admin = User(
@@ -568,6 +586,7 @@ def admin_headers(app, db_session):
         email="admin_test@example.com",
         password="hashed-placeholder",
         role="admin",
+        school_id=school.id,
     )
     db_session.add(admin)
     db_session.commit()
@@ -650,7 +669,7 @@ def parent_headers(app, parent):
 @pytest.fixture(scope="function")
 def user_with_password(app):
     from flask_jwt_extended import create_access_token
-    from school_app.utils.password import hash_password
+    from src.school_app.utils.password import hash_password
 
     plain_password = "OriginalPass123"
 

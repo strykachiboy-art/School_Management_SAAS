@@ -1,6 +1,6 @@
 from typing import Optional, Any, Dict
 from pydantic import BaseModel, ConfigDict, Field
-from school_app.enums import ReportCardStatus
+from school_app.enums.reportcard import ReportCardStatus
 
 
 class ReportCardCalculateRequest(BaseModel):

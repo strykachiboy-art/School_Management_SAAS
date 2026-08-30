@@ -1,4 +1,3 @@
-
 from enum import Enum
 
 class Role(str, Enum):
@@ -7,3 +6,5 @@ class Role(str, Enum):
     TEACHER = "teacher"
     STUDENT = "student"
     PARENT = "parent"
+    HEAD_TEACHER = "head_teacher"
+    PRINCIPAL = "principal"
