@@ -1,0 +1,25 @@
+# Reverse-engineered from the codebase's import statements — no requirements.txt
+# existed in the original project. Versions are NOT pinned here because this
+# environment couldn't install packages to check what you're actually running.
+# Before deploying: run `pip freeze > requirements.txt` from your real working
+# venv to lock exact versions.
+
+Flask
+Flask-SQLAlchemy
+Flask-Migrate
+Flask-Cors
+Flask-JWT-Extended
+Flask-Limiter
+Flask-Marshmallow
+Flask-WTF
+marshmallow
+marshmallow-sqlalchemy
+SQLAlchemy
+pydantic
+python-dotenv
+redis
+requests
+stripe
+google-auth
+Werkzeug
+WTForms
