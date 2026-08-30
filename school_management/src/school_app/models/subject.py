@@ -15,6 +15,7 @@ class Subject(db.Model):
     __table_args__ = (
         db.UniqueConstraint("school_id", "name", name="uq_subject_name_per_school"),
         db.UniqueConstraint("school_id", "code", name="uq_subject_code_per_school"),
+        {"extend_existing": True},
     )
 
     id = db.Column(db.Integer, primary_key=True)

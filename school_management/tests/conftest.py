@@ -1,26 +1,27 @@
 from datetime import date, time
 import pytest
 
-from src.school_app import create_app
-from src.school_app.extensions import db as _db, limiter, redis_client
-from src.school_app.models.academic_session import AcademicSession
-from src.school_app.models.classroom import Classroom
-from src.school_app.models.exam import Exam
-from src.school_app.models.result import Result
-from src.school_app.models.school import School
-from src.school_app.models.student import Student
-from src.school_app.models.subject import Subject
-from src.school_app.models.teacher import Teacher
-from src.school_app.models.user import User
-from src.school_app.models.timetable import Timetable
-from src.school_app.models.parent_guardian import ParentGuardian
-from src.school_app.enums.attendance import AttendanceStatus
-from src.school_app.enums.day_of_week import DayOfWeek
-from src.school_app.models.attendance import Attendance
-from src.school_app.models.term import Term
-from src.school_app.models.notification import Notification
-from src.school_app.enums.notification import NotificationType
 
+# To this:
+from school_app import create_app
+from school_app.extensions import db as _db, limiter, redis_client
+from school_app.models.academic_session import AcademicSession
+from school_app.models.classroom import Classroom
+from school_app.models.exam import Exam
+from school_app.models.result import Result
+from school_app.models.school import School
+from school_app.models.student import Student
+from school_app.models.subject import Subject
+from school_app.models.teacher import Teacher
+from school_app.models.user import User
+from school_app.models.timetable import Timetable
+from school_app.models.parent_guardian import ParentGuardian
+from school_app.enums.attendance import AttendanceStatus
+from school_app.enums.day_of_week import DayOfWeek
+from school_app.models.attendance import Attendance
+from school_app.models.term import Term
+from school_app.models.notification import Notification
+from school_app.enums.notification import NotificationType
 
 # ----------------------------------------------------------------------
 # 1. Global Setup & Teardown Fixtures
@@ -475,9 +476,9 @@ def parent(make_parent):
 
 
 @pytest.fixture
-def subject(app):
+def subject(app, school):
     with app.app_context():
-        subj = Subject(name="Mathematics", code="MATH101")
+        subj = Subject(name="Mathematics", code="MATH101", school_id=school.id)
         _db.session.add(subj)
         _db.session.commit()
         _db.session.refresh(subj)
@@ -497,9 +498,9 @@ def classroom(app, school):
 
 
 @pytest.fixture
-def academic_session(app):
+def academic_session(app, school):
     with app.app_context():
-        sess = AcademicSession(name="2026/2027", end_date=date(2027, 6, 1))
+        sess = AcademicSession(name="2026/2027", end_date=date(2027, 6, 1), school_id=school.id)
         _db.session.add(sess)
         _db.session.commit()
         _db.session.refresh(sess)

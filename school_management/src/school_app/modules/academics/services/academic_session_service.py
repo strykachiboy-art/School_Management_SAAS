@@ -7,7 +7,7 @@ from school_app.modules.audit.services.audit_log_service import create_audit_log
 from school_app.enums.audit import AuditAction
 
 
-# ============================ create academic session ============================
+# ============================ Create Academic Session ============================
 
 def create_academic_session(data, actor_id):
     create_academic = AcademicSession(
@@ -19,7 +19,7 @@ def create_academic_session(data, actor_id):
     db.session.add(create_academic)
     
     try:
-        db.session.flush()  # Forces the SQL insert now so IntegrityError can be caught
+        db.session.flush()
     except IntegrityError:
         db.session.rollback()
         abort(400, description="Could not create academic session — check for duplicate name.")
@@ -33,11 +33,10 @@ def create_academic_session(data, actor_id):
     )
     
     db.session.commit()
-    
     return create_academic
 
 
-# =============================== Get all Academic session =============================
+# ============================ Get All Academic Sessions ============================
 
 def get_all_academic_session(search="", page=1, per_page=10):
     stmt = db.select(AcademicSession)
@@ -45,21 +44,19 @@ def get_all_academic_session(search="", page=1, per_page=10):
         stmt = stmt.where(AcademicSession.name.ilike(f"%{search}%"))
 
     stmt = stmt.order_by(AcademicSession.id.desc())
-    
     return db.paginate(stmt, page=page, per_page=per_page, error_out=False)
 
 
-# ============================== Get academic session ===================================
+# ============================ Get Academic Session ============================
 
-def get_academic_session(Academic_id):
-    return db.session.get(AcademicSession, Academic_id)
+def get_academic_session(academic_id):
+    return db.session.get(AcademicSession, academic_id)
 
 
-# ============================== Update academic session =================================
+# ============================ Update Academic Session ============================
 
 def update_academic_session(data, academic_id, actor_id):
     academic_session = db.session.get(AcademicSession, academic_id)
-    
     if academic_session is None:
         return None
     
@@ -71,15 +68,18 @@ def update_academic_session(data, academic_id, actor_id):
     if data.end_date and data.end_date != academic_session.end_date:
         changes["end_date"] = {"before": str(academic_session.end_date), "after": str(data.end_date)}
 
-    academic_session.name = data.name or academic_session.name
-    academic_session.start_date = data.start_date or academic_session.start_date
-    academic_session.end_date = data.end_date or academic_session.end_date
+    if data.name:
+        academic_session.name = data.name
+    if data.start_date:
+        academic_session.start_date = data.start_date
+    if data.end_date:
+        academic_session.end_date = data.end_date
 
     try:
         db.session.flush()
     except IntegrityError:
         db.session.rollback()
-        abort(400, description="Could not update academic_session — check for duplicate name.")
+        abort(400, description="Could not update academic session — check for duplicate name.")
     
     if changes:
         create_audit_log(
@@ -90,17 +90,15 @@ def update_academic_session(data, academic_id, actor_id):
             description=f"Updated academic session {academic_session.name}",
             changes=changes,
         )
-        
-        db.session.commit()
     
+    db.session.commit()
     return academic_session
-    
 
-# ============================== Delete academic session =================================
+
+# ============================ Delete Academic Session ============================
 
 def delete_session(academic_id, actor_id):
     academic_session = db.session.get(AcademicSession, academic_id)
-    
     if academic_session is None:
         return False
 
@@ -116,21 +114,19 @@ def delete_session(academic_id, actor_id):
     )
     
     db.session.commit()
-    
     return True
 
 
-# ============================== Activate academic session =================================
+# ============================ Activate Academic Session ============================
 
 def activate_academic_session(academic_id, actor_id):
     academic_session = db.session.get(AcademicSession, academic_id)
-
     if academic_session is None:
         return None
 
     db.session.query(AcademicSession).filter(
         AcademicSession.id != academic_id
-    ).update({AcademicSession.is_active: False})
+    ).update({AcademicSession.is_active: False}, synchronize_session=False)
 
     academic_session.is_active = True
 
@@ -143,5 +139,4 @@ def activate_academic_session(academic_id, actor_id):
     )
     
     db.session.commit()
-    
     return academic_session

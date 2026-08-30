@@ -19,7 +19,8 @@ class Timetable(db.Model):
         db.UniqueConstraint(
             "school_id", "teacher_id", "day_of_week", "start_time",
             name="uq_teacher_schedule_per_school",
-        ),
+        ), 
+        {"extend_existing": True},
     )
 
     id = db.Column(db.Integer, primary_key=True)

@@ -1,8 +1,19 @@
-from school_app.modules.grading.services.grading_system_service import get_default_grading_system
+# src/school_app/modules/grading/services/grade_service.py
+
+from collections import defaultdict
+from school_app.extensions import db
 from school_app.models.grading_rule import GradingRule
 from school_app.models.grading_system import GradingSystem
-from school_app.extensions import db
-from collections import defaultdict
+from school_app.modules.grading.services.grading_system_service import get_default_grading_system
+
+
+# =========================== calculate total marks =================================
+def calculate_total(results):
+    """Calculate the sum of marks obtained across a collection of exam results."""
+    if not results:
+        return 0.0
+
+    return sum(result.marks_obtained for result in results)
 
 
 # =========================== normalize a single result =================================
@@ -69,6 +80,7 @@ GRADE_SCALE = (
     (40, "E"),
     (0, "F")
 )
+
 
 def calculate_grade(average, grading_system_id=None, school_id=None):
     from school_app.modules.grading.services.grading_system_service import resolve_grade_for_score

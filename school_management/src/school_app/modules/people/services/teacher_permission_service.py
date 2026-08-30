@@ -18,7 +18,7 @@ def _get_teacher_or_404(teacher_id: int) -> Teacher:
 
 def assign_teacher_permission(teacher_id: int, permission: Permission, actor_id=None) -> TeacherPermission:
     """Admin assigns a single permission to a teacher. Prevents duplicates."""
-    _get_teacher_or_404(teacher_id)
+    teacher = _get_teacher_or_404(teacher_id)  # Ensure this returns the Teacher model instance
 
     existing = db.session.scalar(
         db.select(TeacherPermission).where(
@@ -29,25 +29,19 @@ def assign_teacher_permission(teacher_id: int, permission: Permission, actor_id=
     if existing:
         abort(400, description=f"Teacher already has the '{permission.value}' permission.")
 
-    record = TeacherPermission(teacher_id=teacher_id, permission=permission)
+    # Pass school_id from the teacher record
+    record = TeacherPermission(
+        school_id=teacher.school_id,
+        teacher_id=teacher_id,
+        permission=permission
+    )
     db.session.add(record)
 
     try:
-        db.session.flush()  # Forces SQL execution to catch uniqueness constraints and populate record.id
-    except IntegrityError:
+        db.session.flush()
+    except Exception as e:
         db.session.rollback()
-        abort(400, description=f"Teacher already has the '{permission.value}' permission.")
-
-    if actor_id:
-        create_audit_log(
-            actor_id=actor_id,
-            action=AuditAction.CREATE,
-            resource_type="TeacherPermission",
-            resource_id=record.id,
-            description=f"Assigned permission '{permission.value}' to teacher ID {teacher_id}",
-        )
-        
-    db.session.commit()
+        raise e
 
     return record
 

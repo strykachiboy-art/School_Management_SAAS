@@ -12,7 +12,8 @@ def _utcnow():
 
 class AuditLog(db.Model):
     __tablename__ = "audit_logs"
-
+    __table_args__ = {"extend_existing": True}
+    
     id = db.Column(db.Integer, primary_key=True)
 
     # Tenant context (nullable to allow logging platform-level/super-admin actions)

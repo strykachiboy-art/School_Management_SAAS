@@ -13,6 +13,7 @@ class AcademicSession(db.Model):
     __tablename__ = "academic_sessions"
     __table_args__ = (
         db.UniqueConstraint("school_id", "name", name="uq_academic_session_name_per_school"),
+        {"extend_existing": True},
     )
 
     id = db.Column(db.Integer, primary_key=True)

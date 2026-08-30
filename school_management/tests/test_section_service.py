@@ -1,7 +1,7 @@
 import pytest
-from src.school_app.modules.academics.services.academic_stage_service import create_academic_stage
-from src.school_app.modules.academics.services.academic_level_service import create_academic_level
-from src.school_app.modules.academics.services.section_service import (
+from school_app.modules.academics.services.academic_stage_service import create_academic_stage
+from school_app.modules.academics.services.academic_level_service import create_academic_level
+from school_app.modules.academics.services.section_service import (
     create_section,
     get_all_sections,
     get_section,

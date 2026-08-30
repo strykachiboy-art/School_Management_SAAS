@@ -16,7 +16,7 @@ class TeacherPermission(db.Model):
         db.UniqueConstraint(
             "school_id", "teacher_id", "permission",
             name="uq_teacher_permission_per_school",
-        ),
+        ), {"extend_existing": True},
     )
 
     id = db.Column(db.Integer, primary_key=True)

@@ -12,6 +12,7 @@ def _utcnow():
 
 class Excuse(db.Model):
     __tablename__ = "excuses"
+    __table_args__ = {"extend_existing": True}
 
     id = db.Column(db.Integer, primary_key=True)
     school_id = db.Column(

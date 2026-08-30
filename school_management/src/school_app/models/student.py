@@ -13,7 +13,8 @@ def _utcnow():
 class Student(db.Model):
     __tablename__ = "students"
     __table_args__ = (
-        db.UniqueConstraint("school_id", "admission_number", name="uq_student_admission_number_per_school"),
+        db.UniqueConstraint("school_id", "admission_number", name="uq_student_admission_number_per_school")
+        , {"extend_existing": True},
     )
 
     id = db.Column(db.Integer, primary_key=True)

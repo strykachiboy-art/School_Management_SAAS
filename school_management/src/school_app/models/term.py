@@ -15,7 +15,7 @@ class Term(db.Model):
         db.UniqueConstraint(
             "school_id", "academic_session_id", "name",
             name="uq_term_name_per_session_per_school",
-        ),
+        ), {"extend_existing": True},
     )
 
     id = db.Column(db.Integer, primary_key=True)

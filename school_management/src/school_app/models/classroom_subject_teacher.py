@@ -19,7 +19,7 @@ class ClassroomSubjectTeacher(db.Model):
         db.UniqueConstraint(
             "school_id", "classroom_id", "subject_id", "session_id",
             name="uq_one_teacher_per_classroom_subject_session_per_school",
-        ),
+        ), {"extend_existing": True}
     )
 
     id = db.Column(db.Integer, primary_key=True)

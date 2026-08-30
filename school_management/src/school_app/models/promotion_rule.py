@@ -20,7 +20,7 @@ class PromotionRule(db.Model):
         db.UniqueConstraint(
             "school_id", "from_level_id", "name",
             name="uq_promotion_rule_name_per_level_per_school",
-        ),
+        ), {"extend_existing": True}
     )
 
     id = db.Column(db.Integer, primary_key=True)

@@ -29,7 +29,7 @@ class FeeStructure(db.Model):
         UniqueConstraint(
             "school_id", "classroom_id", "session_id", "term_id", "category",
             name="uq_fee_structure_per_school",
-        ),
+        ), {"extend_existing": True}
     )
 
     id = Column(Integer, primary_key=True)

@@ -11,6 +11,7 @@ def _utcnow():
 
 class ParentGuardian(db.Model):
     __tablename__ = "parentguardians"
+    __table_args__ = {"extend_existing": True}
 
     id = db.Column(db.Integer, primary_key=True)
     school_id = db.Column(
@@ -38,7 +39,7 @@ class ParentGuardianStudent(db.Model):
         db.UniqueConstraint(
             "school_id", "parent_guardian_id", "student_id",
             name="uq_parent_student_per_school",
-        ),
+        ), {"extend_existing": True}
     )
 
     id = db.Column(db.Integer, primary_key=True)

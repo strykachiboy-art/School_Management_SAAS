@@ -30,8 +30,8 @@ def _utcnow():
 
 # ---------- Fee Structure ----------
 
-def create_fee_structure(payload: CreateFeeStructureRequest, actor_id=None) -> FeeStructure:
-    structure = FeeStructure(**payload.model_dump())
+def create_fee_structure(school_id: int, payload: CreateFeeStructureRequest, actor_id=None) -> FeeStructure:
+    structure = FeeStructure(school_id=school_id, **payload.model_dump())
     db.session.add(structure)
     db.session.flush() 
 
@@ -48,8 +48,8 @@ def create_fee_structure(payload: CreateFeeStructureRequest, actor_id=None) -> F
     return structure
 
 
-def update_fee_structure(structure_id: int, payload: UpdateFeeStructureRequest, actor_id=None) -> FeeStructure:
-    structure = db.session.get(FeeStructure, structure_id)
+def update_fee_structure(school_id: int, structure_id: int, payload: UpdateFeeStructureRequest, actor_id=None) -> FeeStructure:
+    structure = FeeStructure.query.filter_by(id=structure_id, school_id=school_id).first()
     if structure is None:
         return None
 
@@ -77,24 +77,24 @@ def update_fee_structure(structure_id: int, payload: UpdateFeeStructureRequest, 
     return structure
 
 
-def get_fee_structures_for_term(classroom_id: int, session_id: int, term_id: int) -> List[FeeStructure]:
+def get_fee_structures_for_term(school_id: int, classroom_id: int, session_id: int, term_id: int) -> List[FeeStructure]:
     return FeeStructure.query.filter_by(
-        classroom_id=classroom_id, session_id=session_id, term_id=term_id
+        school_id=school_id, classroom_id=classroom_id, session_id=session_id, term_id=term_id
     ).all()
 
 
 # ---------- Invoice Generation ----------
 
-def generate_invoices_for_term(payload: GenerateInvoicesRequest, actor_id=None) -> List[Invoice]:
+def generate_invoices_for_term(school_id: int, payload: GenerateInvoicesRequest, actor_id=None) -> List[Invoice]:
     from school_app.models.student import Student 
 
     structures = get_fee_structures_for_term(
-        payload.classroom_id, payload.session_id, payload.term_id
+        school_id, payload.classroom_id, payload.session_id, payload.term_id
     )
     if not structures:
         raise ValueError("No fee structure defined for this classroom/session/term")
 
-    students = Student.query.filter_by(classroom_id=payload.classroom_id).all()
+    students = Student.query.filter_by(school_id=school_id, classroom_id=payload.classroom_id).all()
     if not students:
         raise ValueError("No students found in this classroom")
 
@@ -103,6 +103,7 @@ def generate_invoices_for_term(payload: GenerateInvoicesRequest, actor_id=None) 
 
     for student in students:
         existing = Invoice.query.filter_by(
+            school_id=school_id,
             student_id=student.id,
             session_id=payload.session_id,
             term_id=payload.term_id,
@@ -111,6 +112,7 @@ def generate_invoices_for_term(payload: GenerateInvoicesRequest, actor_id=None) 
             continue  
 
         invoice = Invoice(
+            school_id=school_id,
             student_id=student.id,
             session_id=payload.session_id,
             term_id=payload.term_id,
@@ -121,7 +123,7 @@ def generate_invoices_for_term(payload: GenerateInvoicesRequest, actor_id=None) 
             due_date=payload.due_date,
         )
         invoice.items = [
-            InvoiceItem(category=s.category, amount=s.amount) for s in structures
+            InvoiceItem(school_id=school_id, category=s.category, amount=s.amount) for s in structures
         ]
         db.session.add(invoice)
         invoices.append(invoice)
@@ -145,23 +147,21 @@ def generate_invoices_for_term(payload: GenerateInvoicesRequest, actor_id=None) 
     return invoices
 
 
-def get_student_invoice(invoice_id: int) -> Invoice:
-    invoice = db.session.get(Invoice, invoice_id)
+def get_student_invoice(school_id: int, invoice_id: int) -> Invoice:
+    invoice = Invoice.query.filter_by(id=invoice_id, school_id=school_id).first()
     if invoice is None:
         abort(404, description="Invoice not found")
     return invoice
 
 
-def get_student_invoices(student_id: int) -> List[Invoice]:
-    return Invoice.query.filter_by(student_id=student_id).order_by(Invoice.created_at.desc()).all()
+def get_student_invoices(school_id: int, student_id: int) -> List[Invoice]:
+    return Invoice.query.filter_by(school_id=school_id, student_id=student_id).order_by(Invoice.created_at.desc()).all()
 
 
 # ---------- Discounts & Waivers ----------
 
-def apply_discount(payload: ApplyDiscountRequest, actor_id) -> Invoice:
-    """Reduce what's owed on an invoice without touching the original
-    total_amount, so the original bill stays auditable (blueprint §8)."""
-    invoice = get_student_invoice(payload.invoice_id)
+def apply_discount(school_id: int, payload: ApplyDiscountRequest, actor_id) -> Invoice:
+    invoice = get_student_invoice(school_id, payload.invoice_id)
 
     if invoice.status in (InvoiceStatus.CANCELLED, InvoiceStatus.WAIVED):
         raise ValueError(f"Cannot apply a discount to a {invoice.status.value} invoice")
@@ -192,10 +192,8 @@ def apply_discount(payload: ApplyDiscountRequest, actor_id) -> Invoice:
     return invoice
 
 
-def waive_invoice(payload: WaiveInvoiceRequest, actor_id) -> Invoice:
-    """Forgive the remaining balance on an invoice. Admin-only, audited —
-    see role_required(Role.ADMIN) on the route (blueprint §9)."""
-    invoice = get_student_invoice(payload.invoice_id)
+def waive_invoice(school_id: int, payload: WaiveInvoiceRequest, actor_id) -> Invoice:
+    invoice = get_student_invoice(school_id, payload.invoice_id)
 
     if invoice.status == InvoiceStatus.CANCELLED:
         raise ValueError("Cannot waive a cancelled invoice")
@@ -225,43 +223,36 @@ def waive_invoice(payload: WaiveInvoiceRequest, actor_id) -> Invoice:
 
 # ---------- Payments ----------
 
-def _get_invoice_recipient_user_ids(invoice: Invoice) -> List[int]:
+def _get_invoice_recipient_user_ids(school_id: int, invoice: Invoice) -> List[int]:
     from school_app.models.student import Student
     from school_app.models.parent_guardian import ParentGuardian, ParentGuardianStudent
 
-    student = db.session.get(Student, invoice.student_id)
+    student = Student.query.filter_by(id=invoice.student_id, school_id=school_id).first()
+    if not student:
+        return []
+    
     recipient_user_ids = [student.user_id]
 
     guardian_links = ParentGuardianStudent.query.filter_by(student_id=invoice.student_id).all()
     guardian_ids = [link.parent_guardian_id for link in guardian_links]
 
     if guardian_ids:
-        guardians = ParentGuardian.query.filter(ParentGuardian.id.in_(guardian_ids)).all()
+        guardians = ParentGuardian.query.filter(ParentGuardian.id.in_(guardian_ids), ParentGuardian.school_id == school_id).all()
         recipient_user_ids.extend(g.user_id for g in guardians)
 
     return recipient_user_ids
 
 
-def _generate_payment_reference() -> str:
-    """Server-generated, unique payment reference — never trust a
-    client-supplied value (blueprint §4). Format: SCH-<year>-<seq>.
-    The DB's UNIQUE constraint on Payment.reference is the actual
-    safety net; this count is just for a readable, mostly-sequential
-    number and is retried on the rare collision.
-    """
+def _generate_payment_reference(school_id: int) -> str:
     year = date.today().year
     count_this_year = Payment.query.filter(
+        Payment.school_id == school_id,
         Payment.reference.like(f"SCH-{year}-%")
     ).count()
     return f"SCH-{year}-{count_this_year + 1:06d}"
 
 
-def _apply_confirmed_payment_to_invoice(invoice: Invoice, payment: Payment, actor_id=None) -> None:
-    """Shared by both the offline (record_payment) and gateway
-    (confirm_gateway_payment) paths — bumps amount_paid, flips invoice
-    status, writes the audit log, and notifies student + guardians.
-    Called only once a payment is actually CONFIRMED.
-    """
+def _apply_confirmed_payment_to_invoice(school_id: int, invoice: Invoice, payment: Payment, actor_id=None) -> None:
     status_before = invoice.status
     amount_paid_before = invoice.amount_paid
 
@@ -272,9 +263,6 @@ def _apply_confirmed_payment_to_invoice(invoice: Invoice, payment: Payment, acto
 
     db.session.flush()
 
-    # actor_id is None for gateway-confirmed payments (webhook, no
-    # logged-in user) — AuditLog.actor_id is now nullable, so this
-    # writes fine either way.
     create_audit_log(
         actor_id=actor_id,
         action=AuditAction.CREATE,
@@ -292,7 +280,7 @@ def _apply_confirmed_payment_to_invoice(invoice: Invoice, payment: Payment, acto
     from school_app.modules.notifications.services.notification_service import notify_user
     from school_app.enums.notification import NotificationType
 
-    for recipient_id in _get_invoice_recipient_user_ids(invoice):
+    for recipient_id in _get_invoice_recipient_user_ids(school_id, invoice):
         notify_user(
             recipient_id=recipient_id,
             title="Payment Received",
@@ -301,13 +289,8 @@ def _apply_confirmed_payment_to_invoice(invoice: Invoice, payment: Payment, acto
         )
 
 
-def record_payment(payload: RecordPaymentRequest, recorded_by=None) -> Payment:
-    """Offline payments only (cash, bank transfer, cheque recorded by an
-    admin) — confirmed immediately since there's no gateway to verify
-    against. For card/online payments, use initiate_gateway_payment +
-    confirm_gateway_payment instead.
-    """
-    invoice = db.session.get(Invoice, payload.invoice_id)
+def record_payment(school_id: int, payload: RecordPaymentRequest, recorded_by=None) -> Payment:
+    invoice = Invoice.query.filter_by(id=payload.invoice_id, school_id=school_id).first()
     if invoice is None:
         abort(404, description="Invoice not found")
 
@@ -318,11 +301,10 @@ def record_payment(payload: RecordPaymentRequest, recorded_by=None) -> Payment:
     if payload.amount > remaining:
         raise ValueError(f"Payment exceeds outstanding balance of {remaining}")
 
-    # Retry once on the (very unlikely) reference collision, since the
-    # sequential count above isn't atomic under concurrent requests.
     for attempt in range(2):
-        reference = _generate_payment_reference()
+        reference = _generate_payment_reference(school_id)
         payment = Payment(
+            school_id=school_id,
             invoice_id=invoice.id,
             student_id=invoice.student_id,
             amount=payload.amount,
@@ -341,18 +323,12 @@ def record_payment(payload: RecordPaymentRequest, recorded_by=None) -> Payment:
             if attempt == 1:
                 raise
 
-    _apply_confirmed_payment_to_invoice(invoice, payment, actor_id=recorded_by)
+    _apply_confirmed_payment_to_invoice(school_id, invoice, payment, actor_id=recorded_by)
     return payment
 
 
-def initiate_gateway_payment(payload: InitiateGatewayPaymentRequest) -> dict:
-    """Start a hosted checkout session. Creates a PENDING Payment row
-    (no recorded_by — nobody's recording it, the payer is doing it
-    themselves) and does NOT touch invoice.amount_paid — that only
-    happens once confirm_gateway_payment verifies the transaction.
-    Returns the checkout URL for the frontend to redirect to.
-    """
-    invoice = db.session.get(Invoice, payload.invoice_id)
+def initiate_gateway_payment(school_id: int, payload: InitiateGatewayPaymentRequest) -> dict:
+    invoice = Invoice.query.filter_by(id=payload.invoice_id, school_id=school_id).first()
     if invoice is None:
         abort(404, description="Invoice not found")
 
@@ -364,8 +340,9 @@ def initiate_gateway_payment(payload: InitiateGatewayPaymentRequest) -> dict:
         raise ValueError(f"Payment exceeds outstanding balance of {remaining}")
 
     for attempt in range(2):
-        reference = _generate_payment_reference()
+        reference = _generate_payment_reference(school_id)
         payment = Payment(
+            school_id=school_id,
             invoice_id=invoice.id,
             student_id=invoice.student_id,
             amount=payload.amount,
@@ -393,7 +370,7 @@ def initiate_gateway_payment(payload: InitiateGatewayPaymentRequest) -> dict:
             email=payload.email,
             reference=reference,
             callback_url=payload.callback_url,
-            metadata={"invoice_id": invoice.id, "student_id": invoice.student_id},
+            metadata={"invoice_id": invoice.id, "student_id": invoice.student_id, "school_id": school_id},
         )
     except RuntimeError as e:
         payment.status = PaymentStatus.FAILED
@@ -414,18 +391,13 @@ def initiate_gateway_payment(payload: InitiateGatewayPaymentRequest) -> dict:
     return {"checkout_url": result.checkout_url, "reference": reference, "payment": payment}
 
 
-def confirm_gateway_payment(reference: str) -> Payment:
-    """Called from the webhook/callback route. Never trusts the webhook
-    payload's own status field — always re-verifies with the gateway
-    directly before touching the invoice. Idempotent: a payment already
-    CONFIRMED is returned as-is rather than double-applied.
-    """
-    payment = Payment.query.filter_by(reference=reference).first()
+def confirm_gateway_payment(school_id: int, reference: str) -> Payment:
+    payment = Payment.query.filter_by(reference=reference, school_id=school_id).first()
     if payment is None:
         abort(404, description="Payment not found")
 
     if payment.status == PaymentStatus.CONFIRMED:
-        return payment  # already applied — webhook fired more than once
+        return payment  
 
     if payment.gateway is None:
         raise ValueError("Payment has no associated gateway")
@@ -446,7 +418,7 @@ def confirm_gateway_payment(reference: str) -> Payment:
         db.session.commit()
         raise ValueError("Gateway did not confirm this payment as successful")
 
-    invoice = db.session.get(Invoice, payment.invoice_id)
+    invoice = Invoice.query.filter_by(id=payment.invoice_id, school_id=school_id).first()
     if invoice is None:
         abort(404, description="Invoice not found")
 
@@ -457,14 +429,12 @@ def confirm_gateway_payment(reference: str) -> Payment:
     )
     db.session.flush()
 
-    _apply_confirmed_payment_to_invoice(invoice, payment, actor_id=None)
+    _apply_confirmed_payment_to_invoice(school_id, invoice, payment, actor_id=None)
     return payment
 
 
-def refund_payment(payload: RefundPaymentRequest, actor_id) -> Payment:
-    """Refunds annotate the original payment rather than deleting it,
-    preserving financial history (blueprint §10)."""
-    payment = db.session.get(Payment, payload.payment_id)
+def refund_payment(school_id: int, payload: RefundPaymentRequest, actor_id) -> Payment:
+    payment = Payment.query.filter_by(id=payload.payment_id, school_id=school_id).first()
     if payment is None:
         abort(404, description="Payment not found")
 
@@ -474,7 +444,7 @@ def refund_payment(payload: RefundPaymentRequest, actor_id) -> Payment:
     if payload.refund_amount > payment.amount:
         raise ValueError(f"Refund amount exceeds original payment of {payment.amount}")
 
-    invoice = db.session.get(Invoice, payment.invoice_id)
+    invoice = Invoice.query.filter_by(id=payment.invoice_id, school_id=school_id).first()
 
     payment.status = PaymentStatus.REFUNDED
     payment.refund_amount = payload.refund_amount
@@ -508,17 +478,19 @@ def refund_payment(payload: RefundPaymentRequest, actor_id) -> Payment:
     return payment
 
 
-def get_outstanding_invoices(session_id: int, term_id: int) -> List[Invoice]:
+def get_outstanding_invoices(school_id: int, session_id: int, term_id: int) -> List[Invoice]:
     return Invoice.query.filter(
+        Invoice.school_id == school_id,
         Invoice.session_id == session_id,
         Invoice.term_id == term_id,
         Invoice.status.in_([InvoiceStatus.UNPAID, InvoiceStatus.PARTIAL, InvoiceStatus.OVERDUE]),
     ).all()
 
 
-def mark_overdue_invoices(as_of: date = None) -> int:
+def mark_overdue_invoices(school_id: int, as_of: date = None) -> int:
     as_of = as_of or date.today()
     overdue = Invoice.query.filter(
+        Invoice.school_id == school_id,
         Invoice.due_date < as_of,
         Invoice.status.in_([InvoiceStatus.UNPAID, InvoiceStatus.PARTIAL]),
     ).all()

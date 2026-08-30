@@ -16,7 +16,7 @@ class Attendance(db.Model):
         db.UniqueConstraint(
             "school_id", "student_id", "term_id", "date",
             name="uq_student_term_date_attendance_per_school",
-        ),
+        ), {"extend_existing": True},
     )
 
     id = db.Column(db.Integer, primary_key=True)

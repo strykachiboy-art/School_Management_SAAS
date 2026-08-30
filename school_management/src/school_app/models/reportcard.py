@@ -17,7 +17,7 @@ class ReportCard(db.Model):
         db.UniqueConstraint(
             "school_id", "student_id", "academic_session_id", "term_id",
             name="uq_student_report_card_per_term_per_school",
-        ),
+        ), {"extend_existing": True}
     )
 
     id = db.Column(db.Integer, primary_key=True)

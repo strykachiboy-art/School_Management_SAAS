@@ -18,7 +18,7 @@ class GradingRule(db.Model):
         db.UniqueConstraint(
             "school_id", "grading_system_id", "grade_name",
             name="uq_grade_name_per_system_per_school",
-        ),
+        ), {"extend_existing": True},
     )
 
     id = db.Column(db.Integer, primary_key=True)

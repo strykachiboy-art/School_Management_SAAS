@@ -11,6 +11,11 @@ def _utcnow():
 
 class Notification(db.Model):
     __tablename__ = "notifications"
+    __table_args__ = (
+        db.Index("idx_notification_recipient_read", "recipient_id", "is_read"),
+        db.Index("idx_notification_school_recipient", "school_id", "recipient_id"),
+        {"extend_existing": True},
+    )
 
     id = db.Column(db.Integer, primary_key=True)
 
@@ -36,11 +41,6 @@ class Notification(db.Model):
     read_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=_utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
-
-    __table_args__ = (
-        db.Index("idx_notification_recipient_read", "recipient_id", "is_read"),
-        db.Index("idx_notification_school_recipient", "school_id", "recipient_id"),
-    )
 
     # Unidirectional relationships
     school = db.relationship("School", foreign_keys=[school_id])

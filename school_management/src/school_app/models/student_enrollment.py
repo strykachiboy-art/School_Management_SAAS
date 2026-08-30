@@ -20,7 +20,7 @@ class StudentEnrollment(db.Model):
         db.UniqueConstraint(
             "school_id", "student_id", "academic_session_id",
             name="uq_student_enrollment_per_session_per_school",
-        ),
+        ), {"extend_existing": True},
     )
 
     id = db.Column(db.Integer, primary_key=True)

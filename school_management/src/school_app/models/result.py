@@ -18,7 +18,7 @@ class Result(db.Model):
             "student_id",
             "exam_id",
             name="uq_student_exam_result_per_school",
-        ),
+        ), {"extend_existing": True},
     )
 
     id = db.Column(db.Integer, primary_key=True)

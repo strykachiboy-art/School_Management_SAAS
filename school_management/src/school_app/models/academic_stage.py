@@ -15,6 +15,7 @@ class AcademicStage(db.Model):
     __tablename__ = "academic_stages"
     __table_args__ = (
         db.UniqueConstraint("school_id", "name", name="uq_academic_stage_name_per_school"),
+        {"extend_existing": True}
     )
 
     id = db.Column(db.Integer, primary_key=True)

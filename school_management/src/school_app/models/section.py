@@ -19,6 +19,7 @@ class Section(db.Model):
     __tablename__ = "sections"
     __table_args__ = (
         db.UniqueConstraint("school_id", "level_id", "name", name="uq_section_name_per_level_per_school"),
+        {"extend_existing": True},
     )
 
     id = db.Column(db.Integer, primary_key=True)

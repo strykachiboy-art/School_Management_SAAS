@@ -1,5 +1,5 @@
 import pytest
-from src.school_app.modules.academics.services.academic_stage_service import (
+from school_app.modules.academics.services.academic_stage_service import (
     create_academic_stage,
     get_all_academic_stages,
     get_academic_stage,
