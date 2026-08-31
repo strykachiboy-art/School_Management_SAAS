@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, request, abort, g
+from flask_jwt_extended import get_jwt
 from school_app.decorators import role_required
 from school_app.utils.helpers import validate_request
 from school_app.enums.role import Role
@@ -36,6 +37,9 @@ def create_level(data: AcademicLevelCreateRequest):
 @academic_level_bp.route("", methods=["GET"])
 @role_required(Role.ADMIN, Role.TEACHER)
 def get_all_levels():
+    claims = get_jwt()
+    school_id = claims.get("school_id")  # Extracted straight from JWT payload
+
     stage_id = request.args.get("stage_id", None, type=int)
     search = request.args.get("search", "", type=str)
     include_inactive = request.args.get("include_inactive", False, type=bool)
@@ -43,7 +47,12 @@ def get_all_levels():
     per_page = request.args.get("per_page", 10, type=int)
 
     result = get_all_academic_levels(
-        stage_id=stage_id, search=search, include_inactive=include_inactive, page=page, per_page=per_page
+        school_id=school_id,
+        stage_id=stage_id,
+        search=search,
+        include_inactive=include_inactive,
+        page=page,
+        per_page=per_page,
     )
 
     return jsonify({

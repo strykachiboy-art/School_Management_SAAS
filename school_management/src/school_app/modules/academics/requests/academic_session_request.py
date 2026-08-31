@@ -1,26 +1,18 @@
-from datetime import datetime, timezone
+# src/school_app/modules/academics/requests/academic_session_request.py
+
+from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-
-# ====================================== Base Schema ===============================================
-
 class AcademicSessionBase(BaseModel):
-    name: str = Field(
-        ...,
-        min_length=3,
-        max_length=100,
-        description="Name of the academic session (e.g., '2024/2025 Session')",
-        examples=["2024/2025 Session"]
-    )
-    start_date: datetime = Field(
-        ...,
-        description="Start date and time of the academic session"
-    )
-    end_date: datetime = Field(
-        ...,
-        description="End date and time of the academic session"
-    )
+    name: str = Field(..., min_length=3, max_length=100, examples=["2024/2025 Session"])
+    start_date: datetime = Field(..., description="ISO 8601 start date/time")
+    end_date: datetime = Field(..., description="ISO 8601 end date/time")
+
+    @field_validator("name")
+    @classmethod
+    def strip_name(cls, v: str) -> str:
+        return v.strip()
 
     @field_validator("end_date")
     @classmethod
@@ -31,29 +23,19 @@ class AcademicSessionBase(BaseModel):
         return end_date
 
 
-# ====================================== Request Schemas ===============================================
-
 class AcademicSessionCreateRequest(AcademicSessionBase):
-    """Schema for creating a new academic session."""
-    pass
+    school_id: Optional[int] = Field(None, description="School id for the session; derived from actor if omitted")
 
 
 class AcademicSessionUpdateRequest(BaseModel):
-    """Schema for partial or full updates of an academic session."""
-    name: Optional[str] = Field(
-        None,
-        min_length=3,
-        max_length=100,
-        description="Updated name of the academic session"
-    )
-    start_date: Optional[datetime] = Field(
-        None,
-        description="Updated start date"
-    )
-    end_date: Optional[datetime] = Field(
-        None,
-        description="Updated end date"
-    )
+    name: Optional[str] = Field(None, min_length=3, max_length=100)
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+
+    @field_validator("name")
+    @classmethod
+    def strip_name_optional(cls, v: Optional[str]) -> Optional[str]:
+        return v.strip() if isinstance(v, str) else v
 
     @field_validator("end_date")
     @classmethod
@@ -64,15 +46,10 @@ class AcademicSessionUpdateRequest(BaseModel):
         return end_date
 
 
-# ====================================== Response Schema ===============================================
-
 class AcademicSessionResponse(AcademicSessionBase):
-    """Schema for serializing academic session database models into API responses."""
     id: int
     is_active: bool
     created_at: datetime
     updated_at: datetime
 
-    model_config = ConfigDict(
-        from_attributes=True
-    )
+    model_config = ConfigDict(from_attributes=True)

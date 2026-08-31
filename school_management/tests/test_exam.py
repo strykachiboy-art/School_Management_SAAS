@@ -136,7 +136,7 @@ def test_update_exam_not_found(client, admin_headers, subject, classroom, academ
 
 def test_update_exam_missing_required_field(client, admin_headers, exam, subject, classroom, academic_session):
     payload = {
-        "title": "Incomplete Update",
+        "title": "   ", 
         "subject_id": subject.id,
         "classroom_id": classroom.id,
         "session_id": academic_session.id,

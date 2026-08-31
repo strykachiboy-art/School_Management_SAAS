@@ -53,7 +53,6 @@ class ExamBase(BaseModel):
     @field_validator("weight")
     @classmethod
     def weight_in_range(cls, v: float) -> float:
-        # Weight is a percentage contribution to the subject's period score.
         if v < 0 or v > 100:
             raise ValueError("weight must be between 0 and 100")
         return v
@@ -64,9 +63,13 @@ class ExamCreateRequest(ExamBase):
     pass
 
 
-# Schema used for updating an exam — every field optional so a partial
-# PATCH-style update only changes what's provided.
-class ExamUpdateRequest(BaseModel):
+# Schema used for full updates (PUT - requires all required fields)
+class ExamUpdateRequest(ExamBase):
+    pass
+
+
+# Schema used for partial updates (PATCH - all fields optional with validations)
+class ExamPatchRequest(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     subject_id: Optional[int] = None
@@ -81,8 +84,45 @@ class ExamUpdateRequest(BaseModel):
     weight: Optional[float] = None
     is_required: Optional[bool] = None
 
+    @field_validator("title")
+    @classmethod
+    def title_not_blank(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            v = v.strip()
+            if not v:
+                raise ValueError("title cannot be blank")
+        return v
 
-# Schema used for serializing exam data in API responses (equivalent to dump_only fields)
+    @field_validator("exam_date")
+    @classmethod
+    def exam_date_not_in_past(cls, v: Optional[date]) -> Optional[date]:
+        if v is not None and v < date.today():
+            raise ValueError("exam_date cannot be in the past")
+        return v
+
+    @field_validator("duration_minutes")
+    @classmethod
+    def duration_positive(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v <= 0:
+            raise ValueError("duration_minutes must be a positive number")
+        return v
+
+    @field_validator("total_marks")
+    @classmethod
+    def total_marks_positive(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v <= 0:
+            raise ValueError("total_marks must be a positive number")
+        return v
+
+    @field_validator("weight")
+    @classmethod
+    def weight_in_range(cls, v: Optional[float]) -> Optional[float]:
+        if v is not None and (v < 0 or v > 100):
+            raise ValueError("weight must be between 0 and 100")
+        return v
+
+
+# Schema used for serializing exam data in API responses
 class ExamResponse(ExamBase):
     id: int
     created_at: Optional[datetime] = None

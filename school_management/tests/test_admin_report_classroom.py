@@ -1,6 +1,7 @@
 from unittest.mock import patch
 import pytest
 from school_app.models.classroom import Classroom
+from school_app.models.school import School
 from school_app.models.teacher import Teacher
 from school_app.modules.admin_reports.services.admin_report_classrooms_service import get_admin_report_classrooms
 
@@ -21,16 +22,21 @@ def mock_services():
             ]
         }
         yield mock_academic, mock_attendance
+        
 
 def test_get_admin_report_classrooms(app, db_session, mock_services):
     """Test generating the classroom report with valid data."""
     with app.app_context():
-        # Added user_id=1 to satisfy the NOT NULL constraint on the teachers table
-        teacher = Teacher(id=1, user_id=1, full_name="Jane Doe")
+        school = School(id=1, name="Test School", slug="test-school")
+        db_session.add(school)
+
+        teacher = Teacher(id=1, school_id=1, user_id=1, full_name="Jane Doe")
         db_session.add(teacher)
-        
+
+        # Add school_id=1 here to satisfy the NOT NULL constraint
         classroom = Classroom(
             id=1,
+            school_id=1,
             name="Math 101",
             capacity=30,
             teacher_id=1

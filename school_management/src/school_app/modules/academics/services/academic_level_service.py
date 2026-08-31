@@ -16,6 +16,7 @@ def create_academic_level(data, actor_id):
         abort(404, description=f"Academic stage with ID {data.stage_id} not found.")
 
     level = AcademicLevel(
+        school_id=stage.school_id,
         stage_id=data.stage_id,
         name=data.name,
         display_order=data.display_order,
@@ -25,9 +26,12 @@ def create_academic_level(data, actor_id):
 
     try:
         db.session.flush()
-    except IntegrityError:
+    except IntegrityError as e:
         db.session.rollback()
-        abort(400, description="Could not create academic level — check for duplicate name within this stage.")
+        error_msg = str(e).lower()
+        if "uq_level_name_per_stage_per_school" in error_msg or "unique constraint" in error_msg:
+            abort(400, description="Could not create academic level — check for duplicate name within this stage.")
+        raise e
 
     create_audit_log(
         actor_id=actor_id,
@@ -44,8 +48,8 @@ def create_academic_level(data, actor_id):
 
 # =============================== get all academic levels =============================
 
-def get_all_academic_levels(stage_id=None, search="", include_inactive=False, page=1, per_page=10):
-    stmt = db.select(AcademicLevel)
+def get_all_academic_levels(school_id, stage_id=None, search="", include_inactive=False, page=1, per_page=10):
+    stmt = db.select(AcademicLevel).where(AcademicLevel.school_id == school_id)
     if stage_id is not None:
         stmt = stmt.where(AcademicLevel.stage_id == stage_id)
     if search:
@@ -54,7 +58,6 @@ def get_all_academic_levels(stage_id=None, search="", include_inactive=False, pa
         stmt = stmt.where(AcademicLevel.is_active.is_(True))
 
     stmt = stmt.order_by(AcademicLevel.display_order.asc(), AcademicLevel.id.asc())
-
     return db.paginate(stmt, page=page, per_page=per_page, error_out=False)
 
 
@@ -85,9 +88,12 @@ def update_academic_level(data, level_id, actor_id):
 
     try:
         db.session.flush()
-    except IntegrityError:
+    except IntegrityError as e:
         db.session.rollback()
-        abort(400, description="Could not update academic level — check for duplicate name within this stage.")
+        error_msg = str(e).lower()
+        if "uq_level_name_per_stage_per_school" in error_msg or "unique constraint" in error_msg:
+            abort(400, description="Could not update academic level — check for duplicate name within this stage.")
+        raise e
 
     if changes:
         create_audit_log(

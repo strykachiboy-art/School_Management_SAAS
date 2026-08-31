@@ -1,3 +1,5 @@
+# school_app/modules/academics/routes/academic_session_routes.py
+
 from flask import Blueprint, jsonify, request, abort, g
 from school_app.decorators import role_required
 from school_app.utils.helpers import validate_request
@@ -21,19 +23,21 @@ from school_app.modules.academics.services.academic_session_service import (
 academic_session_bp = Blueprint("academic_session", __name__, url_prefix="/academic-sessions")
 
 
-# ====================================== create_academic_session ===============================================
-
+# Create academic session
 @academic_session_bp.route("/create", methods=["POST"])
 @role_required(Role.ADMIN)
 @validate_request(AcademicSessionCreateRequest)
 def create_session(data: AcademicSessionCreateRequest):
+    """
+    Create a new academic session.
+    The service will derive school_id from the actor if not provided in `data`.
+    """
     session = create_academic_session(data, actor_id=g.user.id)
-    serialized = AcademicSessionResponse.model_validate(session).model_dump()
+    serialized = AcademicSessionResponse.model_validate(session).model_dump(mode="json")
     return jsonify(serialized), 201
 
 
-# ====================================== get_all_academic_sessions ===============================================
-
+# List academic sessions
 @academic_session_bp.route("", methods=["GET"])
 @role_required(Role.ADMIN, Role.TEACHER)
 def get_all_sessions():
@@ -44,15 +48,14 @@ def get_all_sessions():
     result = get_all_academic_session(search=search, page=page, per_page=per_page)
 
     return jsonify({
-        "items": [AcademicSessionResponse.model_validate(item).model_dump() for item in result.items],
+        "items": [AcademicSessionResponse.model_validate(item).model_dump(mode="json") for item in result.items],
         "page": result.page,
         "pages": result.pages,
         "total": result.total,
     }), 200
 
 
-# ====================================== get_academic_session ===============================================
-
+# Get single academic session
 @academic_session_bp.route("/<int:session_id>", methods=["GET"])
 @role_required(Role.ADMIN, Role.TEACHER)
 def get_session(session_id):
@@ -60,13 +63,12 @@ def get_session(session_id):
     if session is None:
         abort(404, description="Academic session not found")
 
-    serialized = AcademicSessionResponse.model_validate(session).model_dump()
+    serialized = AcademicSessionResponse.model_validate(session).model_dump(mode="json")
     return jsonify(serialized), 200
 
 
-# ====================================== update_academic_session ===============================================
-
-@academic_session_bp.route("/<int:session_id>/edit", methods=["PUT", "PATCH"])
+# Update academic session (partial or full)
+@academic_session_bp.route("/<int:session_id>/edit", methods=["PATCH", "PUT"])
 @role_required(Role.ADMIN)
 @validate_request(AcademicSessionUpdateRequest)
 def update_session(data: AcademicSessionUpdateRequest, session_id):
@@ -74,12 +76,11 @@ def update_session(data: AcademicSessionUpdateRequest, session_id):
     if session is None:
         abort(404, description="Academic session not found")
 
-    serialized = AcademicSessionResponse.model_validate(session).model_dump()
+    serialized = AcademicSessionResponse.model_validate(session).model_dump(mode="json")
     return jsonify(serialized), 200
 
 
-# ====================================== delete_academic_session ===============================================
-
+# Delete academic session
 @academic_session_bp.route("/<int:session_id>", methods=["DELETE"])
 @role_required(Role.ADMIN)
 def delete_academic_session_route(session_id):
@@ -90,8 +91,7 @@ def delete_academic_session_route(session_id):
     return jsonify({"message": "Academic session deleted successfully"}), 200
 
 
-# ====================================== activate_academic_session ===============================================
-
+# Activate academic session
 @academic_session_bp.route("/<int:session_id>/activate", methods=["PATCH"])
 @role_required(Role.ADMIN)
 def activate_session(session_id):
@@ -99,5 +99,5 @@ def activate_session(session_id):
     if session is None:
         abort(404, description="Academic session not found")
 
-    serialized = AcademicSessionResponse.model_validate(session).model_dump()
+    serialized = AcademicSessionResponse.model_validate(session).model_dump(mode="json")
     return jsonify(serialized), 200

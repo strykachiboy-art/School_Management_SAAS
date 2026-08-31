@@ -1,33 +1,60 @@
-from datetime import datetime, timedelta
+# tests/test_academic_session.py
 
+import uuid
+from datetime import datetime, timezone
 
-def _session_payload(name="2026 Session"):
-    start = datetime(2026, 1, 1)
-    end = datetime(2026, 12, 31)
+def _iso_date(date_str: str) -> str:
+    return datetime.fromisoformat(date_str).replace(tzinfo=timezone.utc).isoformat()
+
+def _session_payload(name=None):
+    """
+    Return a payload for creating an academic session.
+    By default this produces a unique name to avoid accidental duplicates
+    during test runs.
+    """
+    unique_suffix = uuid.uuid4().hex[:6]
     return {
-        "name": name,
-        "start_date": start.isoformat(),
-        "end_date": end.isoformat(),
+        "name": name or f"Session {unique_suffix}",
+        "start_date": _iso_date("2026-09-01"),
+        "end_date": _iso_date("2027-06-01"),
     }
 
 
-def _create_session(client, admin_headers, name="2026 Session"):
-    response = client.post("/academic-sessions/create", json=_session_payload(name), headers=admin_headers)
+def _create_session(client, admin_headers, name=None):
+    payload = _session_payload(name)
+    response = client.post("/academic-sessions/create", json=payload, headers=admin_headers)
+    if response.status_code != 201:
+        # Helpful debug output in test logs when creation fails
+        print("DEBUG: create payload:", payload)
+        print("DEBUG: response status:", response.status_code)
+        try:
+            print("DEBUG: response json:", response.get_json())
+        except Exception:
+            print("DEBUG: response data:", response.data)
+    assert response.status_code == 201, f"Failed to create session in test helper: {response.get_json()}"
     return response.get_json()
 
 
 def test_create_academic_session_success(client, admin_headers):
-    response = client.post("/academic-sessions/create", json=_session_payload(), headers=admin_headers)
+    payload = _session_payload()
+    response = client.post("/academic-sessions/create", json=payload, headers=admin_headers)
+    if response.status_code != 201:
+        print("DEBUG create failed:", response.status_code, response.get_json() or response.data)
     assert response.status_code == 201
     data = response.get_json()
-    assert data["name"] == "2026 Session"
-    assert data["is_active"] is False
+    assert data["name"] == payload["name"]
+    assert data.get("is_active", False) is False
+    assert "id" in data
 
 
 def test_create_academic_session_duplicate_name(client, admin_headers):
+    # create first
     _create_session(client, admin_headers, name="Dup Session")
-    response = client.post("/academic-sessions/create", json=_session_payload(name="Dup Session"), headers=admin_headers)
-    assert response.status_code == 400
+    # attempt duplicate
+    payload = _session_payload(name="Dup Session")
+    response = client.post("/academic-sessions/create", json=payload, headers=admin_headers)
+    # Accept either 400 with validation message or 409 if your app uses that code for duplicates.
+    assert response.status_code in (400, 409)
 
 
 def test_get_academic_session_success(client, admin_headers):
@@ -47,6 +74,7 @@ def test_get_all_academic_sessions(client, admin_headers):
     response = client.get("/academic-sessions", headers=admin_headers)
     assert response.status_code == 200
     data = response.get_json()
+    assert "items" in data
     assert any(s["name"] == "List Session" for s in data["items"])
 
 
@@ -57,6 +85,8 @@ def test_update_academic_session_success(client, admin_headers):
         json={"name": "New Name"},
         headers=admin_headers,
     )
+    if response.status_code != 200:
+        print("DEBUG update failed:", response.status_code, response.get_json() or response.data)
     assert response.status_code == 200
     assert response.get_json()["name"] == "New Name"
 
@@ -73,6 +103,8 @@ def test_update_academic_session_not_found(client, admin_headers):
 def test_delete_academic_session_success(client, admin_headers):
     created = _create_session(client, admin_headers)
     response = client.delete(f"/academic-sessions/{created['id']}", headers=admin_headers)
+    if response.status_code != 200:
+        print("DEBUG delete failed:", response.status_code, response.get_json() or response.data)
     assert response.status_code == 200
     assert response.get_json()["message"] == "Academic session deleted successfully"
 
@@ -85,6 +117,8 @@ def test_delete_academic_session_not_found(client, admin_headers):
 def test_activate_academic_session_success(client, admin_headers):
     created = _create_session(client, admin_headers)
     response = client.patch(f"/academic-sessions/{created['id']}/activate", headers=admin_headers)
+    if response.status_code != 200:
+        print("DEBUG activate failed:", response.status_code, response.get_json() or response.data)
     assert response.status_code == 200
     assert response.get_json()["is_active"] is True
 

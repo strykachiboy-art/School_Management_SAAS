@@ -1,27 +1,28 @@
+import uuid
 from datetime import date, time
+
 import pytest
 
-
-# To this:
 from school_app import create_app
+from school_app.enums.attendance import AttendanceStatus
+from school_app.enums.day_of_week import DayOfWeek
+from school_app.enums.notification import NotificationType
 from school_app.extensions import db as _db, limiter, redis_client
 from school_app.models.academic_session import AcademicSession
+from school_app.models.academic_stage import AcademicStage
+from school_app.models.attendance import Attendance
 from school_app.models.classroom import Classroom
 from school_app.models.exam import Exam
+from school_app.models.notification import Notification
+from school_app.models.parent_guardian import ParentGuardian
 from school_app.models.result import Result
 from school_app.models.school import School
 from school_app.models.student import Student
 from school_app.models.subject import Subject
 from school_app.models.teacher import Teacher
-from school_app.models.user import User
-from school_app.models.timetable import Timetable
-from school_app.models.parent_guardian import ParentGuardian
-from school_app.enums.attendance import AttendanceStatus
-from school_app.enums.day_of_week import DayOfWeek
-from school_app.models.attendance import Attendance
 from school_app.models.term import Term
-from school_app.models.notification import Notification
-from school_app.enums.notification import NotificationType
+from school_app.models.timetable import Timetable
+from school_app.models.user import User
 
 # ----------------------------------------------------------------------
 # 1. Global Setup & Teardown Fixtures
@@ -97,6 +98,20 @@ def auto_clear_redis(app):
             pass
 
 
+@pytest.fixture(autouse=True)
+def clean_database(app):
+    """Automatically clear relevant tables before and after each test."""
+    with app.app_context():
+        # Clear existing data before test runs to prevent state collision
+        _db.session.query(AcademicSession).delete()
+        _db.session.commit()
+        
+        yield
+        
+        # Cleanup after test runs
+        _db.session.query(AcademicSession).delete()
+        _db.session.commit()
+
 # ----------------------------------------------------------------------
 # 2. HTTP Client Helpers
 # ----------------------------------------------------------------------
@@ -159,6 +174,21 @@ def admin_client(client, admin_headers):
 
     return AdminClient(client)
 
+
+@pytest.fixture
+def admin_stage(app, school):
+    """Creates a default AcademicStage bound to the test school."""
+    with app.app_context():
+        stage = AcademicStage(
+            name=f"Stage {uuid.uuid4().hex[:6]}",
+            display_order=1,
+            school_id=school.id,
+        )
+        _db.session.add(stage)
+        _db.session.commit()
+        _db.session.refresh(stage)
+        _db.session.expunge(stage)
+        return stage
 
 # ----------------------------------------------------------------------
 # 3. Model Factories

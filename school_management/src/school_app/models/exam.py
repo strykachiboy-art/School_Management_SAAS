@@ -26,6 +26,7 @@ class Exam(db.Model):
     classroom_id = db.Column(db.Integer, db.ForeignKey("classrooms.id", ondelete="CASCADE"), nullable=False)
     session_id = db.Column(db.Integer, db.ForeignKey("academic_sessions.id", ondelete="CASCADE"), nullable=False)
     term_id = db.Column(db.Integer, db.ForeignKey("terms.id", ondelete="SET NULL"), nullable=True)
+    exam_date = db.Column(db.Date, nullable=True)
     start_time = db.Column(db.Time, nullable=True)
     duration_minutes = db.Column(db.Integer, nullable=True)
     total_marks = db.Column(db.Integer, nullable=False)
