@@ -29,7 +29,7 @@ term_bp = Blueprint("term", __name__, url_prefix="/terms")
 @role_required(Role.ADMIN)
 @validate_request(TermCreateRequest)
 def create_term_route(data: TermCreateRequest):
-    term = create_term(data, actor_id=g.user.id)
+    term = create_term(data, school_id=g.user.school_id, actor_id=g.user.id)
     serialized = TermResponse.model_validate(term).model_dump()
     return jsonify(serialized), 201
 
@@ -43,7 +43,7 @@ def get_all_terms_route():
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 10, type=int)
 
-    result = get_all_term(search=search, page=page, per_page=per_page)
+    result = get_all_term(school_id=g.user.school_id, search=search, page=page, per_page=per_page)
 
     return jsonify({
         "items": [TermResponse.model_validate(item).model_dump() for item in result.items],
@@ -58,7 +58,7 @@ def get_all_terms_route():
 @term_bp.route("/<int:term_id>", methods=["GET"])
 @role_required(Role.ADMIN, Role.TEACHER)
 def get_term_route(term_id: int):
-    term = get_term_by_id(term_id)
+    term = get_term_by_id(term_id, school_id=g.user.school_id)
     if term is None:
         abort(404, description="Term not found")
 
@@ -72,7 +72,7 @@ def get_term_route(term_id: int):
 @role_required(Role.ADMIN)
 @validate_request(TermUpdateRequest)
 def update_term_route(data: TermUpdateRequest, term_id: int):
-    term = update_term(data, term_id, actor_id=g.user.id)
+    term = update_term(data, term_id, school_id=g.user.school_id, actor_id=g.user.id)
     if term is None:
         abort(404, description="Term not found")
 
@@ -86,7 +86,9 @@ def update_term_route(data: TermUpdateRequest, term_id: int):
 @role_required(Role.ADMIN)
 @validate_request(TermReassignSessionRequest)
 def reassign_term_session_route(data: TermReassignSessionRequest, term_id: int):
-    term = reassign_term_session(term_id, data.academic_session_id, actor_id=g.user.id)
+    term = reassign_term_session(
+        term_id, data.academic_session_id, school_id=g.user.school_id, actor_id=g.user.id
+    )
     if term is None:
         abort(404, description="Term not found")
 
@@ -99,7 +101,7 @@ def reassign_term_session_route(data: TermReassignSessionRequest, term_id: int):
 @term_bp.route("/<int:term_id>", methods=["DELETE"])
 @role_required(Role.ADMIN)
 def delete_term_route(term_id: int):
-    deleted = delete_term(term_id, actor_id=g.user.id)
+    deleted = delete_term(term_id, school_id=g.user.school_id, actor_id=g.user.id)
     if not deleted:
         abort(404, description="Term not found")
 
@@ -111,7 +113,7 @@ def delete_term_route(term_id: int):
 @term_bp.route("/<int:term_id>/activate", methods=["PATCH"])
 @role_required(Role.ADMIN)
 def activate_term_route(term_id: int):
-    term = activate_term(term_id, actor_id=g.user.id)
+    term = activate_term(term_id, school_id=g.user.school_id, actor_id=g.user.id)
     if term is None:
         abort(404, description="Term not found")
 

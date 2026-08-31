@@ -1,7 +1,7 @@
 from flask import abort
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
-from werkzeug.security import generate_password_hash
+from school_app.utils.password import hash_password
 from school_app.models import Classroom
 
 from school_app.extensions import db
@@ -15,7 +15,7 @@ def create_students(form, school_id, actor_id=None):
     user = User(
         username=form.username,
         email=form.email,
-        password=generate_password_hash(form.password),
+        password=hash_password(form.password),
         role="student",
         school_id=school_id,
     )

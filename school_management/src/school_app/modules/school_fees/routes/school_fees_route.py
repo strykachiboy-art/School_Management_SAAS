@@ -6,6 +6,7 @@ from flask import Blueprint, jsonify, request, abort, g, current_app
 from school_app.decorators import role_required
 from school_app.utils.helpers import validate_request
 from school_app.enums.role import Role
+from school_app.models.school_fees import Payment
 from school_app.modules.school_fees.requests.school_fees_request import (
     CreateFeeStructureRequest,
     UpdateFeeStructureRequest,
@@ -44,7 +45,7 @@ school_fees_bp = Blueprint("school_fees", __name__, url_prefix="/fees")
 @role_required(Role.ADMIN)
 @validate_request(CreateFeeStructureRequest)
 def create_fee_structure_route(data: CreateFeeStructureRequest):
-    structure = create_fee_structure(data, actor_id=g.user.id)
+    structure = create_fee_structure(g.user.school_id, data, actor_id=g.user.id)
 
     if structure is None:
         abort(400, description="Could not create fee structure")
@@ -63,7 +64,7 @@ def get_fee_structures_route():
     if not all([classroom_id, session_id, term_id]):
         abort(400, description="classroom_id, session_id, and term_id are required")
 
-    structures = get_fee_structures_for_term(classroom_id, session_id, term_id)
+    structures = get_fee_structures_for_term(g.user.school_id, classroom_id, session_id, term_id)
     serialized_list = [FeeStructureResponse.model_validate(s).model_dump() for s in structures]
     return jsonify(serialized_list), 200
 
@@ -72,7 +73,7 @@ def get_fee_structures_route():
 @role_required(Role.ADMIN)
 @validate_request(UpdateFeeStructureRequest)
 def update_fee_structure_route(data: UpdateFeeStructureRequest, structure_id):
-    structure = update_fee_structure(structure_id, data, actor_id=g.user.id)
+    structure = update_fee_structure(g.user.school_id, structure_id, data, actor_id=g.user.id)
 
     if structure is None:
         abort(404, description="Fee structure not found")
@@ -88,7 +89,7 @@ def update_fee_structure_route(data: UpdateFeeStructureRequest, structure_id):
 @validate_request(GenerateInvoicesRequest)
 def generate_invoices_route(data: GenerateInvoicesRequest):
     try:
-        invoices = generate_invoices_for_term(data, actor_id=g.user.id)
+        invoices = generate_invoices_for_term(g.user.school_id, data, actor_id=g.user.id)
     except ValueError as e:
         abort(400, description=str(e))
 
@@ -99,7 +100,7 @@ def generate_invoices_route(data: GenerateInvoicesRequest):
 @school_fees_bp.route("/invoices/<int:invoice_id>", methods=["GET"])
 @role_required(Role.ADMIN, Role.TEACHER, Role.STUDENT)
 def get_invoice_detail_route(invoice_id):
-    invoice = get_student_invoice(invoice_id)
+    invoice = get_student_invoice(g.user.school_id, invoice_id)
 
     if g.user.role == Role.STUDENT:
         from school_app.models.student import Student
@@ -120,7 +121,7 @@ def get_student_invoices_route(student_id):
         if student is None or student.id != student_id:
             abort(403, description="You do not have access to these invoices")
 
-    invoices = get_student_invoices(student_id)
+    invoices = get_student_invoices(g.user.school_id, student_id)
     serialized_list = [InvoiceResponse.model_validate(inv).model_dump() for inv in invoices]
     return jsonify(serialized_list), 200
 
@@ -134,7 +135,7 @@ def get_outstanding_invoices_route():
     if not all([session_id, term_id]):
         abort(400, description="session_id and term_id are required")
 
-    invoices = get_outstanding_invoices(session_id, term_id)
+    invoices = get_outstanding_invoices(g.user.school_id, session_id, term_id)
     serialized_list = [InvoiceResponse.model_validate(inv).model_dump() for inv in invoices]
     return jsonify(serialized_list), 200
 
@@ -146,7 +147,7 @@ def get_outstanding_invoices_route():
 @validate_request(RecordPaymentRequest)
 def record_payment_route(data: RecordPaymentRequest):
     try:
-        payment = record_payment(data, recorded_by=g.user.id)
+        payment = record_payment(g.user.school_id, data, recorded_by=g.user.id)
     except ValueError as e:
         abort(400, description=str(e))
 
@@ -159,7 +160,7 @@ def record_payment_route(data: RecordPaymentRequest):
 @validate_request(RefundPaymentRequest)
 def refund_payment_route(data: RefundPaymentRequest):
     try:
-        payment = refund_payment(data, actor_id=g.user.id)
+        payment = refund_payment(g.user.school_id, data, actor_id=g.user.id)
     except ValueError as e:
         abort(400, description=str(e))
 
@@ -174,12 +175,12 @@ def initiate_gateway_payment_route(data: InitiateGatewayPaymentRequest):
     if g.user.role == Role.STUDENT:
         from school_app.models.student import Student
         student = Student.query.filter_by(user_id=g.user.id).first()
-        invoice = get_student_invoice(data.invoice_id)
+        invoice = get_student_invoice(g.user.school_id, data.invoice_id)
         if student is None or invoice.student_id != student.id:
             abort(403, description="You do not have access to this invoice")
 
     try:
-        result = initiate_gateway_payment(data)
+        result = initiate_gateway_payment(g.user.school_id, data)
     except ValueError as e:
         abort(400, description=str(e))
 
@@ -199,8 +200,14 @@ def gateway_webhook_route():
     if not reference:
         abort(400, description="Missing transaction reference")
 
+    # Webhooks are unauthenticated (no g.user), so school_id must come
+    # from the payment record itself, found by reference alone.
+    payment = Payment.query.filter_by(reference=reference).first()
+    if payment is None:
+        abort(404, description="Payment not found")
+
     try:
-        confirm_gateway_payment(reference)
+        confirm_gateway_payment(payment.school_id, reference)
     except ValueError as e:
         abort(400, description=str(e))
 
@@ -235,8 +242,12 @@ def stripe_webhook_route():
     if not reference:
         abort(400, description="Missing reference in Stripe session metadata")
 
+    payment = Payment.query.filter_by(reference=reference).first()
+    if payment is None:
+        abort(404, description="Payment not found")
+
     try:
-        confirm_gateway_payment(reference)
+        confirm_gateway_payment(payment.school_id, reference)
     except ValueError as e:
         abort(400, description=str(e))
 
@@ -249,8 +260,18 @@ def stripe_webhook_route():
 def verify_gateway_payment_route(data: VerifyGatewayPaymentRequest):
     """Manual verification path for the frontend to poll after the
     checkout redirect, independent of whether the webhook has landed yet."""
+    payment = Payment.query.filter_by(reference=data.reference).first()
+    if payment is None:
+        abort(404, description="Payment not found")
+
+    if g.user.role == Role.STUDENT:
+        from school_app.models.student import Student
+        student = Student.query.filter_by(user_id=g.user.id).first()
+        if student is None or payment.student_id != student.id:
+            abort(403, description="You do not have access to this payment")
+
     try:
-        payment = confirm_gateway_payment(data.reference)
+        payment = confirm_gateway_payment(g.user.school_id, data.reference)
     except ValueError as e:
         abort(400, description=str(e))
 
@@ -265,7 +286,7 @@ def verify_gateway_payment_route(data: VerifyGatewayPaymentRequest):
 @validate_request(ApplyDiscountRequest)
 def apply_discount_route(data: ApplyDiscountRequest):
     try:
-        invoice = apply_discount(data, actor_id=g.user.id)
+        invoice = apply_discount(g.user.school_id, data, actor_id=g.user.id)
     except ValueError as e:
         abort(400, description=str(e))
 
@@ -278,7 +299,7 @@ def apply_discount_route(data: ApplyDiscountRequest):
 @validate_request(WaiveInvoiceRequest)
 def waive_invoice_route(data: WaiveInvoiceRequest):
     try:
-        invoice = waive_invoice(data, actor_id=g.user.id)
+        invoice = waive_invoice(g.user.school_id, data, actor_id=g.user.id)
     except ValueError as e:
         abort(400, description=str(e))
 

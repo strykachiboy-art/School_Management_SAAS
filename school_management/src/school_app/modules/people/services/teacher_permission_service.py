@@ -9,27 +9,27 @@ from school_app.modules.audit.services.audit_log_service import create_audit_log
 from school_app.enums.audit import AuditAction
 
 
-def _get_teacher_or_404(teacher_id: int) -> Teacher:
+def _get_teacher_or_404(teacher_id: int, school_id: int) -> Teacher:
     teacher = db.session.get(Teacher, teacher_id)
-    if teacher is None:
+    if teacher is None or teacher.school_id != school_id:
         abort(404, description=f"Teacher with ID {teacher_id} not found.")
     return teacher
 
 
-def assign_teacher_permission(teacher_id: int, permission: Permission, actor_id=None) -> TeacherPermission:
+def assign_teacher_permission(teacher_id: int, permission: Permission, school_id: int, actor_id=None) -> TeacherPermission:
     """Admin assigns a single permission to a teacher. Prevents duplicates."""
-    teacher = _get_teacher_or_404(teacher_id)  # Ensure this returns the Teacher model instance
+    teacher = _get_teacher_or_404(teacher_id, school_id)
 
     existing = db.session.scalar(
         db.select(TeacherPermission).where(
             TeacherPermission.teacher_id == teacher_id,
+            TeacherPermission.school_id == school_id,
             TeacherPermission.permission == permission,
         )
     )
     if existing:
         abort(400, description=f"Teacher already has the '{permission.value}' permission.")
 
-    # Pass school_id from the teacher record
     record = TeacherPermission(
         school_id=teacher.school_id,
         teacher_id=teacher_id,
@@ -46,45 +46,54 @@ def assign_teacher_permission(teacher_id: int, permission: Permission, actor_id=
     return record
 
 
-def get_teacher_permissions(teacher_id: int) -> list[TeacherPermission]:
+def get_teacher_permissions(teacher_id: int, school_id: int) -> list[TeacherPermission]:
     """All permissions currently assigned to one teacher."""
-    _get_teacher_or_404(teacher_id)
+    _get_teacher_or_404(teacher_id, school_id)
 
     return db.session.scalars(
-        db.select(TeacherPermission).where(TeacherPermission.teacher_id == teacher_id)
+        db.select(TeacherPermission).where(
+            TeacherPermission.teacher_id == teacher_id,
+            TeacherPermission.school_id == school_id,
+        )
     ).all()
 
 
-def get_all_teacher_permissions() -> list[TeacherPermission]:
-    """Admin view — every permission assignment, across all teachers."""
-    return db.session.scalars(db.select(TeacherPermission)).all()
+def get_all_teacher_permissions(school_id: int) -> list[TeacherPermission]:
+    """Admin view — every permission assignment, scoped to this school."""
+    return db.session.scalars(
+        db.select(TeacherPermission).where(TeacherPermission.school_id == school_id)
+    ).all()
 
 
-def update_teacher_permissions(teacher_id: int, permissions: list[Permission], actor_id=None) -> list[TeacherPermission]:
+def update_teacher_permissions(teacher_id: int, permissions: list[Permission], school_id: int, actor_id=None) -> list[TeacherPermission]:
     """
     Replaces a teacher's full permission set with the given list.
     Only adds what's missing and removes what's no longer wanted —
     unchanged permissions keep their original row untouched.
     """
-    _get_teacher_or_404(teacher_id)
+    _get_teacher_or_404(teacher_id, school_id)
 
     desired = set(permissions)
 
     existing_records = db.session.scalars(
-        db.select(TeacherPermission).where(TeacherPermission.teacher_id == teacher_id)
+        db.select(TeacherPermission).where(
+            TeacherPermission.teacher_id == teacher_id,
+            TeacherPermission.school_id == school_id,
+        )
     ).all()
     existing_permissions = {r.permission for r in existing_records}
 
     added = desired - existing_permissions
     removed = existing_permissions - desired
 
-    # Remove permissions no longer wanted.
     for record in existing_records:
         if record.permission not in desired:
             db.session.delete(record)
 
-    # Add permissions that are newly wanted.
-    new_records = [TeacherPermission(teacher_id=teacher_id, permission=p) for p in added]
+    new_records = [
+        TeacherPermission(teacher_id=teacher_id, school_id=school_id, permission=p)
+        for p in added
+    ]
     db.session.add_all(new_records)
     db.session.flush()
 
@@ -100,19 +109,23 @@ def update_teacher_permissions(teacher_id: int, permissions: list[Permission], a
                 "removed": [p.value for p in removed],
             },
         )
-        
+
     db.session.commit()
 
     return db.session.scalars(
-        db.select(TeacherPermission).where(TeacherPermission.teacher_id == teacher_id)
+        db.select(TeacherPermission).where(
+            TeacherPermission.teacher_id == teacher_id,
+            TeacherPermission.school_id == school_id,
+        )
     ).all()
 
 
-def remove_teacher_permission(teacher_id: int, permission: Permission, actor_id=None) -> bool:
+def remove_teacher_permission(teacher_id: int, permission: Permission, school_id: int, actor_id=None) -> bool:
     """Admin revokes a specific permission from a teacher."""
     record = db.session.scalar(
         db.select(TeacherPermission).where(
             TeacherPermission.teacher_id == teacher_id,
+            TeacherPermission.school_id == school_id,
             TeacherPermission.permission == permission,
         )
     )
@@ -130,7 +143,7 @@ def remove_teacher_permission(teacher_id: int, permission: Permission, actor_id=
             resource_id=record_id,
             description=f"Revoked permission '{permission.value}' from teacher ID {teacher_id}",
         )
-        
+
     db.session.commit()
-        
+
     return True

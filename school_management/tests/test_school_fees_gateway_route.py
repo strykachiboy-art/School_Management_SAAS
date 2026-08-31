@@ -12,12 +12,13 @@ from school_app.modules.school_fees.requests.school_fees_request import (
 from school_app.modules.school_fees.services.school_fees_service import create_fee_structure, generate_invoices_for_term
 
 
-def _make_invoice(admin_actor_id, classroom, academic_session, term, student, amount=50000.0):
+def _make_invoice(admin_actor_id, classroom, academic_session, term, student, school, amount=50000.0):
     student.classroom_id = classroom.id
     db.session.merge(student)
     db.session.commit()
 
     create_fee_structure(
+        school.id,
         CreateFeeStructureRequest(
             classroom_id=classroom.id,
             session_id=academic_session.id,
@@ -29,6 +30,7 @@ def _make_invoice(admin_actor_id, classroom, academic_session, term, student, am
     )
 
     invoices = generate_invoices_for_term(
+        school.id,
         GenerateInvoicesRequest(
             classroom_id=classroom.id,
             session_id=academic_session.id,
@@ -74,9 +76,9 @@ def _mock_stripe_gateway():
 # ====================================== Payment Initiation Tests ===============================================
 
 def test_initiate_gateway_payment_route_paystack_as_admin(
-    client, admin_headers, admin_actor_id, classroom, academic_session, term, student
+    client, admin_headers, admin_actor_id, classroom, academic_session, term, student, school
 ):
-    invoice = _make_invoice(admin_actor_id, classroom, academic_session, term, student)
+    invoice = _make_invoice(admin_actor_id, classroom, academic_session, term, student, school)
 
     with patch("school_app.modules.school_fees.services.school_fees_service.get_gateway", return_value=_mock_paystack_gateway()):
         response = client.post(
@@ -93,9 +95,9 @@ def test_initiate_gateway_payment_route_paystack_as_admin(
 
 
 def test_initiate_gateway_payment_route_stripe_as_admin(
-    client, admin_headers, admin_actor_id, classroom, academic_session, term, student
+    client, admin_headers, admin_actor_id, classroom, academic_session, term, student, school
 ):
-    invoice = _make_invoice(admin_actor_id, classroom, academic_session, term, student)
+    invoice = _make_invoice(admin_actor_id, classroom, academic_session, term, student, school)
 
     with patch("school_app.modules.school_fees.services.school_fees_service.get_gateway", return_value=_mock_stripe_gateway()):
         response = client.post(
@@ -112,9 +114,9 @@ def test_initiate_gateway_payment_route_stripe_as_admin(
 
 
 def test_initiate_gateway_payment_route_as_own_student(
-    client, student_headers, student, admin_actor_id, classroom, academic_session, term
+    client, student_headers, student, admin_actor_id, classroom, academic_session, term, school
 ):
-    invoice = _make_invoice(admin_actor_id, classroom, academic_session, term, student)
+    invoice = _make_invoice(admin_actor_id, classroom, academic_session, term, student, school)
 
     with patch("school_app.modules.school_fees.services.school_fees_service.get_gateway", return_value=_mock_paystack_gateway()):
         response = client.post(
@@ -127,9 +129,9 @@ def test_initiate_gateway_payment_route_as_own_student(
 
 
 def test_initiate_gateway_payment_route_as_other_students_invoice_forbidden(
-    client, student2_headers, student, admin_actor_id, classroom, academic_session, term
+    client, student2_headers, student, admin_actor_id, classroom, academic_session, term, school
 ):
-    invoice = _make_invoice(admin_actor_id, classroom, academic_session, term, student)
+    invoice = _make_invoice(admin_actor_id, classroom, academic_session, term, student, school)
 
     response = client.post(
         "/fees/payments/gateway/initiate",
@@ -165,8 +167,8 @@ def test_initiate_gateway_payment_route_missing_fields(client, admin_headers):
     assert response.status_code == 400
 
 
-def test_initiate_gateway_payment_route_requires_auth(client, classroom, academic_session, term, student, admin_actor_id):
-    invoice = _make_invoice(admin_actor_id, classroom, academic_session, term, student)
+def test_initiate_gateway_payment_route_requires_auth(client, classroom, academic_session, term, student, admin_actor_id, school):
+    invoice = _make_invoice(admin_actor_id, classroom, academic_session, term, student, school)
 
     response = client.post("/fees/payments/gateway/initiate", json=_initiate_payload(invoice))
     assert response.status_code == 401
@@ -175,9 +177,9 @@ def test_initiate_gateway_payment_route_requires_auth(client, classroom, academi
 # ====================================== Paystack Webhook Tests ===============================================
 
 def test_gateway_webhook_route_confirms_payment(
-    client, admin_headers, admin_actor_id, classroom, academic_session, term, student
+    client, admin_headers, admin_actor_id, classroom, academic_session, term, student, school
 ):
-    invoice = _make_invoice(admin_actor_id, classroom, academic_session, term, student)
+    invoice = _make_invoice(admin_actor_id, classroom, academic_session, term, student, school)
 
     with patch("school_app.modules.school_fees.services.school_fees_service.get_gateway", return_value=_mock_paystack_gateway()):
         init_response = client.post(
@@ -225,10 +227,10 @@ def test_gateway_webhook_route_unknown_reference(client):
 # ====================================== Stripe Webhook Tests ===============================================
 
 def test_stripe_webhook_route_confirms_payment(
-    client, app, admin_headers, admin_actor_id, classroom, academic_session, term, student
+    client, app, admin_headers, admin_actor_id, classroom, academic_session, term, student, school
 ):
     app.config["STRIPE_WEBHOOK_SECRET"] = "whsec_test_secret"
-    invoice = _make_invoice(admin_actor_id, classroom, academic_session, term, student)
+    invoice = _make_invoice(admin_actor_id, classroom, academic_session, term, student, school)
 
     with patch("school_app.modules.school_fees.services.school_fees_service.get_gateway", return_value=_mock_stripe_gateway()):
         init_response = client.post(
@@ -339,9 +341,9 @@ def test_stripe_webhook_route_missing_reference_in_metadata(client, app):
 # ====================================== Direct Verification Tests ===============================================
 
 def test_verify_gateway_payment_route_as_admin(
-    client, admin_headers, admin_actor_id, classroom, academic_session, term, student
+    client, admin_headers, admin_actor_id, classroom, academic_session, term, student, school
 ):
-    invoice = _make_invoice(admin_actor_id, classroom, academic_session, term, student)
+    invoice = _make_invoice(admin_actor_id, classroom, academic_session, term, student, school)
 
     with patch("school_app.modules.school_fees.services.school_fees_service.get_gateway", return_value=_mock_paystack_gateway()):
         init_response = client.post(

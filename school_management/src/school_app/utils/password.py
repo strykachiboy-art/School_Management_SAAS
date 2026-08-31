@@ -1,3 +1,4 @@
+from flask import current_app
 from werkzeug.security import generate_password_hash, check_password_hash
 
 
@@ -5,6 +6,12 @@ def hash_password(password: str) -> str:
     
     if not password or not isinstance(password, str):
         raise ValueError("Password must be a non-empty string.")
+
+    try:
+        if current_app and current_app.config.get("TESTING"):
+            return generate_password_hash(password, method="pbkdf2:sha256:1000")
+    except RuntimeError:
+        pass  
 
     return generate_password_hash(password)
 

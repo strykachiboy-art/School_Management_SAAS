@@ -17,13 +17,12 @@ from school_app.modules.grading.services.exam_service import (
 exam_bp = Blueprint('exam', __name__, url_prefix="/exams")
 
 
-# ================================= Create Exam Route ==================================
 @exam_bp.route("/create", methods=["POST"])
 @role_required(Role.ADMIN)
 @validate_request(ExamCreateRequest)
 def create_exam_route(data: ExamCreateRequest):
     try:
-        created_exam = create_exam(data, actor_id=g.user.id)
+        created_exam = create_exam(data, school_id=g.user.school_id, actor_id=g.user.id)
 
         if created_exam is None:
             return jsonify({"error": "Could not create exam"}), 400
@@ -35,7 +34,6 @@ def create_exam_route(data: ExamCreateRequest):
         return jsonify({"error": "Database error — duplicate or invalid constraint."}), 400
 
 
-# ================================== Get All Exams Route ==================================
 @exam_bp.route("/", methods=["GET"])
 @role_required(Role.ADMIN, Role.TEACHER, Role.STUDENT)
 def get_exams():
@@ -45,7 +43,7 @@ def get_exams():
         classroom_id = request.args.get("classroom_id", None, type=int)
 
         if request.args.get("paginate") == "true":
-            page = paginate_exams()
+            page = paginate_exams(school_id=g.user.school_id)
             return jsonify({
                 "items": [ExamResponse.model_validate(item).model_dump(mode="json") for item in page.items],
                 "page": page.page,
@@ -53,22 +51,21 @@ def get_exams():
                 "total": page.total,
             }), 200
         elif search or subject_id or classroom_id:
-            exams = search_exams(search)
+            exams = search_exams(school_id=g.user.school_id, search=search, subject_id=subject_id, classroom_id=classroom_id)
         else:
-            exams = get_all_exam()
+            exams = get_all_exam(school_id=g.user.school_id)
 
         serialized_exams = [ExamResponse.model_validate(e).model_dump(mode="json") for e in exams]
         return jsonify(serialized_exams), 200
-        
+
     except Exception as e:
         abort(500, description="An unexpected error occurred.")
 
 
-# =============================== Get Exam by ID Route ===============================
 @exam_bp.route("/<int:exam_id>", methods=["GET"])
 @role_required(Role.ADMIN, Role.TEACHER, Role.STUDENT)
 def get_exam(exam_id):
-    exam = get_exam_by_id(exam_id)
+    exam = get_exam_by_id(exam_id, school_id=g.user.school_id)
     if exam is None:
         abort(404, description="Exam not found")
 
@@ -76,27 +73,25 @@ def get_exam(exam_id):
     return jsonify(serialized_exam), 200
 
 
-# =============================== Update Exam Route =====================================
 @exam_bp.route("/<int:exam_id>/edit", methods=["PUT", "PATCH"])
 @role_required(Role.ADMIN)
 @validate_request(ExamUpdateRequest)
 def update_exam_route(data: ExamUpdateRequest, exam_id):
-    exam = get_exam_by_id(exam_id)
+    exam = get_exam_by_id(exam_id, school_id=g.user.school_id)
     if exam is None:
         abort(404, description="Exam not found")
 
-    updated_exam = update_exam(exam_id, data, actor_id=g.user.id)
+    updated_exam = update_exam(exam_id, data, school_id=g.user.school_id, actor_id=g.user.id)
 
     serialized_exam = ExamResponse.model_validate(updated_exam).model_dump(mode="json")
     return jsonify(serialized_exam), 200
 
 
-# =============================== Remove Exam Route =====================================
 @exam_bp.route("/<int:exam_id>", methods=["DELETE"])
 @role_required(Role.ADMIN)
 def remove_exam(exam_id):
-    deleted = delete_exam(exam_id, actor_id=g.user.id)
-    
+    deleted = delete_exam(exam_id, school_id=g.user.school_id, actor_id=g.user.id)
+
     if not deleted:
         abort(404, description="Exam not found")
 

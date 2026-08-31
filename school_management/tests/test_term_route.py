@@ -1,6 +1,6 @@
 import pytest
 from datetime import date
-from school_app.extensions import db
+from school_app.extensions import db as _db
 from school_app.models.term import Term
 
 
@@ -9,19 +9,20 @@ from school_app.models.term import Term
 # ----------------------------------------------------------------------
 
 @pytest.fixture
-def term(app, academic_session):
+def term(app, academic_session, school):
+    """Creates a default Term record linked to the AcademicSession fixture."""
     with app.app_context():
         t = Term(
             name="First Term",
+            academic_session_id=academic_session.id,
             start_date=date(2026, 9, 1),
             end_date=date(2026, 12, 15),
-            is_current=False,  # or whatever attribute is defined on your model
-            academic_session_id=academic_session.id,
+            school_id=school.id,
         )
-        db.session.add(t)
-        db.session.commit()
-        db.session.refresh(t)
-        db.session.expunge(t)
+        _db.session.add(t)
+        _db.session.commit()
+        _db.session.refresh(t)
+        _db.session.expunge(t)
         return t
 
 

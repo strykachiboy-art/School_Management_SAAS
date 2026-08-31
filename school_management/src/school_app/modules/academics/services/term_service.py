@@ -47,10 +47,15 @@ def _check_no_overlap(academic_session_id, start_date, end_date, exclude_term_id
         )
 
 
-def _unset_other_current_terms(academic_session_id, exclude_term_id=None):
-    """Rule 3: only one term per session may be is_current=True."""
+def _unset_other_current_terms(school_id, academic_session_id, exclude_term_id=None):
+    """Rule 3: only one term per session may be is_current=True.
+    Scoped by school_id so activating a term in one school can never
+    deactivate another school's current term (same bug class as
+    activate_academic_session)."""
     stmt = db.update(Term).where(
-        Term.academic_session_id == academic_session_id, Term.is_current.is_(True)
+        Term.school_id == school_id,
+        Term.academic_session_id == academic_session_id,
+        Term.is_current.is_(True),
     )
     if exclude_term_id:
         stmt = stmt.where(Term.id != exclude_term_id)
@@ -60,7 +65,7 @@ def _unset_other_current_terms(academic_session_id, exclude_term_id=None):
 
 # ============================ create term ============================
 
-def create_term(data, actor_id):
+def create_term(data, school_id, actor_id):
     try:
         _check_unique_name(data.academic_session_id, data.name)
         _check_no_overlap(data.academic_session_id, data.start_date, data.end_date)
@@ -68,6 +73,7 @@ def create_term(data, actor_id):
         abort(400, description=str(e))
 
     term = Term(
+        school_id=school_id,
         academic_session_id=data.academic_session_id,
         name=data.name,
         start_date=data.start_date,
@@ -78,7 +84,9 @@ def create_term(data, actor_id):
     db.session.flush()
 
     if term.is_current:
-        _unset_other_current_terms(data.academic_session_id, exclude_term_id=term.id)
+        _unset_other_current_terms(
+            school_id, data.academic_session_id, exclude_term_id=term.id
+        )
 
     create_audit_log(
         actor_id=actor_id,
@@ -94,8 +102,8 @@ def create_term(data, actor_id):
 
 # =============================== get all terms =============================
 
-def get_all_term(search="", page=1, per_page=10):
-    stmt = db.select(Term)
+def get_all_term(school_id, search="", page=1, per_page=10):
+    stmt = db.select(Term).where(Term.school_id == school_id)
     if search:
         stmt = stmt.where(Term.name.ilike(f"%{search}%"))
     stmt = stmt.order_by(Term.start_date.desc())
@@ -105,14 +113,20 @@ def get_all_term(search="", page=1, per_page=10):
 
 # ============================== get term ===================================
 
-def get_term_by_id(term_id):
-    return db.session.get(Term, term_id)
+def get_term_by_id(term_id, school_id):
+    """Returns None both when the term doesn't exist and when it belongs to
+    a different school — never a distinct error for "not found" vs "not
+    yours", so cross-tenant access can't be distinguished from a 404."""
+    term = db.session.get(Term, term_id)
+    if term is None or term.school_id != school_id:
+        return None
+    return term
 
 
 # ============================== update term =================================
 
-def update_term(data, term_id, actor_id):
-    term = db.session.get(Term, term_id)
+def update_term(data, term_id, school_id, actor_id):
+    term = get_term_by_id(term_id, school_id)
     if term is None:
         return None
 
@@ -141,7 +155,7 @@ def update_term(data, term_id, actor_id):
     term.end_date = new_end
 
     if data.is_current is True:
-        _unset_other_current_terms(term.academic_session_id, exclude_term_id=term.id)
+        _unset_other_current_terms(school_id, term.academic_session_id, exclude_term_id=term.id)
         term.is_current = True
         changes["is_current"] = {"before": False, "after": True}
     elif data.is_current is False:
@@ -165,8 +179,8 @@ def update_term(data, term_id, actor_id):
 
 # ============================== reassign term to a different session =================================
 
-def reassign_term_session(term_id, new_academic_session_id, actor_id):
-    term = db.session.get(Term, term_id)
+def reassign_term_session(term_id, new_academic_session_id, school_id, actor_id):
+    term = get_term_by_id(term_id, school_id)
     if term is None:
         return None
 
@@ -195,8 +209,8 @@ def reassign_term_session(term_id, new_academic_session_id, actor_id):
 
 # ============================== delete term =================================
 
-def delete_term(term_id, actor_id):
-    term = db.session.get(Term, term_id)
+def delete_term(term_id, school_id, actor_id):
+    term = get_term_by_id(term_id, school_id)
     if term is None:
         return False
 
@@ -210,13 +224,14 @@ def delete_term(term_id, actor_id):
         )
 
     term_name = term.name
+    term_id_for_log = term.id
     db.session.delete(term)
 
     create_audit_log(
         actor_id=actor_id,
         action=AuditAction.DELETE,
         resource_type="Term",
-        resource_id=term_id,
+        resource_id=term_id_for_log,
         description=f"Deleted term {term_name}",
     )
 
@@ -226,12 +241,12 @@ def delete_term(term_id, actor_id):
 
 # ============================== activate term =================================
 
-def activate_term(term_id, actor_id):
-    term = db.session.get(Term, term_id)
+def activate_term(term_id, school_id, actor_id):
+    term = get_term_by_id(term_id, school_id)
     if term is None:
         return None
 
-    _unset_other_current_terms(term.academic_session_id, exclude_term_id=term.id)
+    _unset_other_current_terms(school_id, term.academic_session_id, exclude_term_id=term.id)
     term.is_current = True
 
     create_audit_log(

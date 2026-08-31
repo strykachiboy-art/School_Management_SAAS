@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from school_app.extensions import db
 from school_app.models.student_enrollment import StudentEnrollment
 from school_app.models.academic_session import AcademicSession
+from school_app.models.classroom import Classroom
 from school_app.enums.enrollment import EnrollmentStatus
 
 
@@ -11,7 +12,6 @@ def _utcnow():
 
 
 def _get_current_session_id(school_id=None):
- 
     stmt = db.select(AcademicSession).where(AcademicSession.is_active.is_(True))
     if school_id is not None:
         stmt = stmt.where(AcademicSession.school_id == school_id)
@@ -36,29 +36,31 @@ def get_enrollment_history(student_id):
 
 
 def record_enrollment(student_id, classroom_id, academic_session_id=None, status=None, remarks=None, recorded_by=None, school_id=None):
-   
+    if classroom_id is None:
+        return None
+
+    if school_id is None:
+        classroom = db.session.get(Classroom, classroom_id)
+        if classroom:
+            school_id = classroom.school_id
+
     if academic_session_id is None:
         academic_session_id = _get_current_session_id(school_id=school_id)
+
+    if academic_session_id is None:
+        return None
 
     current = get_current_enrollment(student_id)
 
     if current is not None:
         current.withdrawal_date = _utcnow()
         if status is not None:
-
             current.status = status
-        elif classroom_id is None:
-            current.status = EnrollmentStatus.WITHDRAWN
         else:
             current.status = EnrollmentStatus.TRANSFERRED
 
-    if classroom_id is None:
-        return None
-
-    if academic_session_id is None:
-        return None
-
     new_enrollment = StudentEnrollment(
+        school_id=school_id,
         student_id=student_id,
         classroom_id=classroom_id,
         academic_session_id=academic_session_id,

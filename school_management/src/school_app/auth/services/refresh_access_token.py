@@ -1,14 +1,14 @@
 from flask_jwt_extended import create_access_token
 from school_app.extensions import redis_client
+import redis
 
 
 def refresh_access_token(user_id: str, current_jti: str, role: str) -> tuple[str | None, str | None]:
     
-    # Validates the refresh token against Redis whitelist and issues a new access token.
-    # Returns (new_access_token, None) on success, or (None, error_message) on failure.
-    
-    # 1. Fetch whitelisted JTI from Redis
-    cached_jti = redis_client.get(f"refresh_whitelist:{user_id}")
+    try:
+        cached_jti = redis_client.get(f"refresh_whitelist:{user_id}")
+    except redis.exceptions.RedisError:
+        return None, "Unable to verify refresh token — please try again shortly."
 
     # 2. Convert from bytes if Redis returned a string/bytes object
     if isinstance(cached_jti, bytes):

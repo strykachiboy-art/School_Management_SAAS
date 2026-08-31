@@ -2,6 +2,7 @@
 import secrets
 
 from flask_jwt_extended import create_access_token, create_refresh_token, decode_token
+import redis
 
 from school_app.extensions import db, redis_client
 from school_app.models.user import User
@@ -35,7 +36,10 @@ def issue_tokens(user: User) -> dict:
     import time
     ttl = exp - int(time.time())
     if ttl > 0:
-        redis_client.set(f"refresh_whitelist:{user.id}", jti, ex=ttl)
+        try:
+            redis_client.set(f"refresh_whitelist:{user.id}", jti, ex=ttl)
+        except redis.exceptions.RedisError:
+            pass
 
     return {
         "access_token": access_token,

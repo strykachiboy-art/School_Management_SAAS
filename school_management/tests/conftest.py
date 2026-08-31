@@ -194,14 +194,14 @@ def notification(make_notification, student):
     return make_notification(student.user_id)
 
 @pytest.fixture
-def term(app, academic_session):
-    """Creates a default Term record linked to the AcademicSession fixture."""
+def term(app, academic_session, school):
     with app.app_context():
         t = Term(
             name="First Term",
             academic_session_id=academic_session.id,
             start_date=date(2026, 9, 1),
             end_date=date(2026, 12, 15),
+            school_id=school.id,
         )
         _db.session.add(t)
         _db.session.commit()
@@ -211,7 +211,7 @@ def term(app, academic_session):
 
 
 @pytest.fixture
-def make_attendance(app, student, term):
+def make_attendance(app, student, term, school):
     """Factory fixture for creating attendance records."""
     def _make(student_obj=student, term_obj=term, date_val=date(2026, 5, 10), status=AttendanceStatus.PRESENT):
         with app.app_context():
@@ -220,6 +220,7 @@ def make_attendance(app, student, term):
                 term_id=term_obj.id,
                 date=date_val,
                 status=status,
+                school_id=school.id,
             )
             _db.session.add(att)
             _db.session.commit()
@@ -372,7 +373,7 @@ def make_classroom(app, school):
 
 
 @pytest.fixture
-def make_exam(app, subject, classroom, academic_session):
+def make_exam(app, subject, classroom, academic_session, school):
     def _make(suffix="1"):
         with app.app_context():
             exam = Exam(
@@ -385,6 +386,7 @@ def make_exam(app, subject, classroom, academic_session):
                 start_time=time(9, 0),
                 duration_minutes=90,
                 total_marks=100,
+                school_id=school.id,
             )
             _db.session.add(exam)
             _db.session.commit()
@@ -395,13 +397,14 @@ def make_exam(app, subject, classroom, academic_session):
 
 
 @pytest.fixture
-def make_result(app, student, exam):
+def make_result(app, student, exam, school):
     def _make(student_obj=student, exam_obj=exam, marks=85.5):
         with app.app_context():
             result = Result(
                 student_id=student_obj.id,
                 exam_id=exam_obj.id,
                 marks_obtained=marks,
+                school_id=school.id,
             )
             _db.session.add(result)
             _db.session.commit()
@@ -412,7 +415,7 @@ def make_result(app, student, exam):
 
 
 @pytest.fixture
-def make_timetable(app, term, classroom, subject, teacher):
+def make_timetable(app, term, classroom, subject, teacher, school):
     """Factory fixture for creating Timetable entries."""
     def _make(
         term_obj=term,
@@ -432,6 +435,7 @@ def make_timetable(app, term, classroom, subject, teacher):
                 day_of_week=day_of_week,
                 start_time=start_time_val,
                 end_time=end_time_val,
+                school_id=school.id,
             )
             _db.session.add(tt)
             _db.session.commit()
@@ -604,6 +608,13 @@ def admin_headers(app, db_session, school):
 
 
 @pytest.fixture(scope="function")
+def admin_auth_headers(admin_headers):
+    """Alias for admin_headers — some test files (academic hierarchy
+    routes) were written expecting this name specifically."""
+    return admin_headers
+
+
+@pytest.fixture(scope="function")
 def teacher_headers(app, teacher):
     from flask_jwt_extended import create_access_token
 
@@ -670,7 +681,7 @@ def parent_headers(app, parent):
 @pytest.fixture(scope="function")
 def user_with_password(app):
     from flask_jwt_extended import create_access_token
-    from src.school_app.utils.password import hash_password
+    from school_app.utils.password import hash_password
 
     plain_password = "OriginalPass123"
 

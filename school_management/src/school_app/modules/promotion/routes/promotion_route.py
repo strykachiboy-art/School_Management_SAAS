@@ -30,10 +30,11 @@ promotion_bp = Blueprint("promotion", __name__, url_prefix="/promotions")
 @promotion_bp.route("/students/<int:student_id>/sessions/<int:academic_session_id>/evaluate", methods=["GET"])
 @role_required(Role.ADMIN, Role.TEACHER)
 def evaluate_promotion_route(student_id, academic_session_id):
+    school_id = getattr(g.user, "school_id", None) if g.user else None
     evaluation = evaluate_student_promotion(
         student_id, 
         academic_session_id, 
-        school_id=g.user.school_id
+        school_id=school_id
     )
 
     if evaluation is None:
@@ -49,17 +50,21 @@ def evaluate_promotion_route(student_id, academic_session_id):
 @role_required(Role.ADMIN, Role.TEACHER)
 @validate_request(PromoteStudentRequest)
 def promote_student_route(data: PromoteStudentRequest, student_id, academic_session_id):
+    school_id = getattr(g.user, "school_id", None) if g.user else None
+    user_id = g.user.id if g.user else None
+    user_role = g.user.role if g.user else None
+
     try:
         history = promote_student_service(
             student_id,
             academic_session_id,
             data.to_classroom_id,
-            school_id=g.user.school_id,
+            school_id=school_id,
             remarks=data.remarks,
-            decided_by=g.user.id if g.user else None,
-            decided_by_role=g.user.role if g.user else None,
+            decided_by=user_id,
+            decided_by_role=user_role,
             allow_level_skip=data.allow_level_skip,
-            actor_id=g.user.id if g.user else None
+            actor_id=user_id
         )
     except ValueError as err:
         abort(400, description=str(err))
@@ -79,13 +84,16 @@ def promote_student_route(data: PromoteStudentRequest, student_id, academic_sess
 @role_required(Role.ADMIN)
 @validate_request(RepeatStudentRequest)
 def repeat_student_route(data: RepeatStudentRequest, student_id, academic_session_id):
+    school_id = getattr(g.user, "school_id", None) if g.user else None
+    user_id = g.user.id if g.user else None
+
     history = repeat_student_service(
         student_id,
         academic_session_id,
-        school_id=g.user.school_id,
+        school_id=school_id,
         remarks=data.remarks,
-        decided_by=g.user.id if g.user else None,
-        actor_id=g.user.id if g.user else None
+        decided_by=user_id,
+        actor_id=user_id
     )
 
     if history is None:
@@ -101,13 +109,16 @@ def repeat_student_route(data: RepeatStudentRequest, student_id, academic_sessio
 @role_required(Role.ADMIN)
 @validate_request(GraduateStudentRequest)
 def graduate_student_route(data: GraduateStudentRequest, student_id, academic_session_id):
+    school_id = getattr(g.user, "school_id", None) if g.user else None
+    user_id = g.user.id if g.user else None
+
     history = graduate_student_service(
         student_id,
         academic_session_id,
-        school_id=g.user.school_id,
+        school_id=school_id,
         remarks=data.remarks,
-        decided_by=g.user.id if g.user else None,
-        actor_id=g.user.id if g.user else None
+        decided_by=user_id,
+        actor_id=user_id
     )
 
     if history is None:
@@ -122,8 +133,13 @@ def graduate_student_route(data: GraduateStudentRequest, student_id, academic_se
 @promotion_bp.route("/students/<int:student_id>/history", methods=["GET"])
 @role_required(Role.ADMIN, Role.TEACHER, Role.STUDENT)
 def student_promotion_history_route(student_id):
-    if g.user and g.user.role == "student" and getattr(g.user.student_profile, "id", None) != student_id:
-        abort(403, description="Students may only view their own promotion history")
+    user_role = getattr(g.user, "role", None)
+    
+    # Check if student role matches either string or Enum value safely
+    if user_role in (Role.STUDENT, Role.STUDENT.value, "student"):
+        student_profile_id = getattr(getattr(g.user, "student_profile", None), "id", None)
+        if student_profile_id != student_id:
+            abort(403, description="Students may only view their own promotion history")
 
     try:
         page = max(1, int(request.args.get("page", 1)))
@@ -131,9 +147,11 @@ def student_promotion_history_route(student_id):
     except ValueError:
         abort(400, description="page and per_page must be integers")
 
+    school_id = getattr(g.user, "school_id", None) if g.user else None
+
     result = get_student_promotion_history(
         student_id, 
-        school_id=g.user.school_id, 
+        school_id=school_id, 
         page=page, 
         per_page=per_page
     )
@@ -162,13 +180,18 @@ def session_promotions_route(academic_session_id):
     decision = None
     if decision_param:
         try:
-            decision = PromotionDecision(decision_param.lower())
-        except ValueError:
-            abort(
-                400,
-                description=f"Invalid decision '{decision_param}'. Must be one of: "
-                f"{', '.join(d.value for d in PromotionDecision)}",
-            )
+            # Handle string case dynamically (e.g. uppercase vs lowercase)
+            formatted_param = decision_param.strip().upper()
+            decision = PromotionDecision[formatted_param]
+        except (KeyError, ValueError):
+            try:
+                decision = PromotionDecision(decision_param.lower())
+            except ValueError:
+                abort(
+                    400,
+                    description=f"Invalid decision '{decision_param}'. Must be one of: "
+                    f"{', '.join(d.value for d in PromotionDecision)}",
+                )
 
     classroom_id = None
     if classroom_id_param:
@@ -177,9 +200,11 @@ def session_promotions_route(academic_session_id):
         except ValueError:
             abort(400, description="classroom_id must be an integer")
 
+    school_id = getattr(g.user, "school_id", None) if g.user else None
+
     promotions = get_session_promotions(
         academic_session_id, 
-        school_id=g.user.school_id, 
+        school_id=school_id, 
         decision=decision, 
         classroom_id=classroom_id
     )
@@ -197,13 +222,16 @@ def session_promotions_route(academic_session_id):
 @role_required(Role.ADMIN)
 @validate_request(BulkPromoteRequest)
 def bulk_promote_session_route(data: BulkPromoteRequest, academic_session_id):
+    school_id = getattr(g.user, "school_id", None) if g.user else None
+    user_id = g.user.id if g.user else None
+
     try:
         results = promote_session_students(
             academic_session_id,
-            school_id=g.user.school_id,
+            school_id=school_id,
             classroom_id=data.classroom_id,
-            decided_by=g.user.id if g.user else None,
-            actor_id=g.user.id if g.user else None
+            decided_by=user_id,
+            actor_id=user_id
         )
     except ValueError as err:
         abort(404, description=str(err))

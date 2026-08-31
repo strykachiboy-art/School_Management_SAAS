@@ -8,9 +8,10 @@ from school_app.modules.audit.services.audit_log_service import create_audit_log
 from school_app.enums.audit import AuditAction
 
 # ================================== Create Exam ===============================
-def create_exam(data, actor_id=None):
+def create_exam(data, school_id, actor_id=None):
     """data is an ExamCreateRequest (Pydantic) — build the Exam model here."""
     exam = Exam(
+        school_id=school_id,
         title=data.title,
         description=data.description,
         subject_id=data.subject_id,
@@ -25,9 +26,9 @@ def create_exam(data, actor_id=None):
         weight=data.weight,
         is_required=data.is_required,
     )
-    
+
     db.session.add(exam)
-    
+
     try:
         db.session.flush()
     except IntegrityError:
@@ -42,39 +43,33 @@ def create_exam(data, actor_id=None):
             resource_id=exam.id,
             description=f"Created exam {exam.title}",
         )
-        
+
     db.session.commit()
 
     return exam
 
 # =============================== Get exam_id ================================
-def get_exam(exam_id):
-    return db.session.get(Exam, exam_id)
+def get_exam(exam_id, school_id):
+    exam = db.session.get(Exam, exam_id)
+    if exam is None or exam.school_id != school_id:
+        return None
+    return exam
 
 
 # ============================ Get all Exam ==================================
-def get_all_exam():
+def get_all_exam(school_id):
     return db.session.execute(
-        db.select(Exam)
+        db.select(Exam).where(Exam.school_id == school_id)
     ).scalars().all()
 
 
 # ============================== Update Exam ===================================
-def update_exam(exam_id, form, actor_id=None):
+def update_exam(exam_id, form, school_id, actor_id=None):
     """form is an ExamUpdateRequest — every field is Optional[...] = None,
     so "not provided" is unambiguously None and doesn't get confused with a
     genuinely-provided False or 0.
-
-    FIX: previously used `form.field or exam.field`, which — combined with
-    ExamCreateRequest being reused for updates and having non-optional
-    fields with defaults — meant a caller explicitly setting is_required to
-    False, or weight to 0, would be silently ignored and the old value kept,
-    since Python treats False and 0 as falsy. Switched to explicit
-    `is not None` checks against an update schema where every field
-    defaults to None when omitted, so False/0 are now honored as real
-    updates instead of being mistaken for "not provided".
     """
-    exam = db.session.get(Exam, exam_id)
+    exam = get_exam(exam_id, school_id)
 
     if exam is None:
         return None
@@ -130,14 +125,14 @@ def update_exam(exam_id, form, actor_id=None):
             description=f"Updated exam {exam.title}",
             changes=changes,
         )
-        
+
     db.session.commit()
 
     return exam
 
 # ============================ Delete Exam ===============================
-def delete_exam(exam_id, actor_id=None):
-    exam = db.session.get(Exam, exam_id)
+def delete_exam(exam_id, school_id, actor_id=None):
+    exam = get_exam(exam_id, school_id)
 
     if exam is None:
         return False
@@ -153,15 +148,15 @@ def delete_exam(exam_id, actor_id=None):
             resource_id=exam_id,
             description=f"Deleted exam {exam_title}",
         )
-        
+
     db.session.commit()
-        
+
     return True
 
 
 # =========================== Search and filter ============================
-def search_exams(search=None, subject_id=None, classroom_id=None):
-    statement = db.select(Exam)
+def search_exams(school_id, search=None, subject_id=None, classroom_id=None):
+    statement = db.select(Exam).where(Exam.school_id == school_id)
 
     if search:
         statement = statement.where(
@@ -182,8 +177,8 @@ def search_exams(search=None, subject_id=None, classroom_id=None):
 
 
 # ========================= paginate_exams ============================
-def paginate_exams(page=1, per_page=20):
-    statement = db.select(Exam).order_by(Exam.exam_date)
+def paginate_exams(school_id, page=1, per_page=20):
+    statement = db.select(Exam).where(Exam.school_id == school_id).order_by(Exam.exam_date)
 
     return db.paginate(statement,
                        page=page,
