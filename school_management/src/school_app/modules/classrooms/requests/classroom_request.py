@@ -32,12 +32,19 @@ class ClassroomCreateRequest(ClassroomBase):
 
 
 # Schema used for serializing classroom data in API responses (equivalent to dump_only fields)
-class ClassroomResponse(ClassroomBase):
-    id: int
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+from pydantic import BaseModel, ConfigDict
+from typing import Optional
 
+
+class ClassroomResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    school_id: int
+    name: str
+    capacity: int
+    location: Optional[str] = None
+    teacher_id: Optional[int] = None
 
 
 # Schema used for bulk-assigning students to a classroom
