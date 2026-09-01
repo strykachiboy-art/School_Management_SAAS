@@ -1,5 +1,6 @@
 # App/auth/request/register.py
-from pydantic import BaseModel, EmailStr, field_validator, model_validator
+from typing import Optional
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 
 class RegisterRequest(BaseModel):
@@ -7,6 +8,7 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
     confirm_password: str
+    school_id: Optional[int] = Field(default=None, ge=1)
 
     @field_validator("email")
     @classmethod

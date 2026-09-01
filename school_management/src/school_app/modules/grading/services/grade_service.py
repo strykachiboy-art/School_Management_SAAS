@@ -9,24 +9,32 @@ from school_app.modules.grading.services.grading_system_service import (
 
 
 # =========================== calculate total marks =================================
+
 def calculate_total(results):
     """Calculate the sum of marks obtained across a collection of exam results."""
     if not results:
         return 0.0
 
-    return sum(result.marks_obtained for result in results)
+    return sum(
+        result.marks_obtained
+        for result in results
+    )
 
 
-# =========================== normalize a single result =================================
+# =========================== normalize a single result ==============================
+
 def normalize_score(marks_obtained, total_marks):
-    """Convert a raw score into a 0-100 percentage of its own maximum."""
+    """Convert a raw score into a 0-100 percentage."""
     if not total_marks:
         return 0.0
 
-    return (marks_obtained / total_marks) * 100
+    return (
+        marks_obtained / total_marks
+    ) * 100
 
 
-# =========================== group results by subject =================================
+# =========================== group results by subject ===============================
+
 def _group_by_subject(results):
     grouped = defaultdict(list)
 
@@ -36,12 +44,14 @@ def _group_by_subject(results):
     return grouped
 
 
-# =========================== calculate one subject's score =================================
+# =========================== calculate one subject's score ==========================
+
 def calculate_subject_score(results_for_subject):
     """
-    Combine every assessment component for a single subject into one
-    weighted, normalized score (0-100).
+    Combine every assessment component for a single subject
+    into one weighted, normalized score (0-100).
     """
+
     if not results_for_subject:
         return 0.0
 
@@ -65,7 +75,8 @@ def calculate_subject_score(results_for_subject):
     return weighted_sum / total_weight
 
 
-# =========================== per-subject scores (public) =================================
+# =========================== per-subject scores =====================================
+
 def get_subject_scores(results):
     grouped = _group_by_subject(results)
 
@@ -75,21 +86,13 @@ def get_subject_scores(results):
     }
 
 
-# =========================== calculate overall average =================================
+# =========================== calculate overall average ==============================
+
 def calculate_overall_average(results):
     """
-    Calculate the weighted overall average of the supplied results.
-
-    Each result contributes its normalized percentage according to the
-    weight of its exam.
-
-    Example:
-        80 marks with weight 2
-        60 marks with weight 1
-
-        (80 * 2 + 60 * 1) / (2 + 1)
-        = 73.3333
+    Calculate the weighted overall average of supplied results.
     """
+
     if not results:
         return 0.0
 
@@ -97,10 +100,12 @@ def calculate_overall_average(results):
     total_weight = 0.0
 
     for result in results:
-        weight = getattr(result.exam, "weight", 1.0)
+        weight = getattr(
+            result.exam,
+            "weight",
+            1.0,
+        )
 
-        # Preserve the existing default behavior when weight is missing
-        # or explicitly None.
         if weight is None:
             weight = 1.0
 
@@ -123,7 +128,8 @@ def calculate_overall_average(results):
     return weighted_sum / total_weight
 
 
-# ============================= calculate grade ==================================
+# ============================= calculate grade ======================================
+
 GRADE_SCALE = (
     (70, "A"),
     (60, "B"),
@@ -134,7 +140,11 @@ GRADE_SCALE = (
 )
 
 
-def calculate_grade(average, grading_system_id=None, school_id=None):
+def calculate_grade(
+    average,
+    grading_system_id=None,
+    school_id=None,
+):
     from school_app.modules.grading.services.grading_system_service import (
         resolve_grade_for_score,
     )
@@ -151,7 +161,6 @@ def calculate_grade(average, grading_system_id=None, school_id=None):
     if system_existed:
         return "Ungraded"
 
-    # Only reached if no GradingSystem exists in the DB at all.
     for minimum, fallback_grade in GRADE_SCALE:
         if average >= minimum:
             return fallback_grade
@@ -159,7 +168,8 @@ def calculate_grade(average, grading_system_id=None, school_id=None):
     return "F"
 
 
-# ====================== Grade Remarks ===========================
+# ====================== Grade Remarks ===============================================
+
 GRADE_REMARK = {
     "A": "Excellent",
     "B": "Very Good",
@@ -170,8 +180,11 @@ GRADE_REMARK = {
 }
 
 
-def calculate_remark(grade_or_average, grading_system_id=None, school_id=None):
-
+def calculate_remark(
+    grade_or_average,
+    grading_system_id=None,
+    school_id=None,
+):
     normalized_grade = (
         str(grade_or_average).strip().upper()
         if grade_or_average is not None
@@ -179,9 +192,14 @@ def calculate_remark(grade_or_average, grading_system_id=None, school_id=None):
     )
 
     system = (
-        db.session.get(GradingSystem, grading_system_id)
+        db.session.get(
+            GradingSystem,
+            grading_system_id,
+        )
         if grading_system_id is not None
-        else get_default_grading_system(school_id=school_id)
+        else get_default_grading_system(
+            school_id=school_id,
+        )
     )
 
     if system is not None:
@@ -195,15 +213,30 @@ def calculate_remark(grade_or_average, grading_system_id=None, school_id=None):
         if rule is not None and rule.remark is not None:
             return rule.remark
 
-    return GRADE_REMARK.get(normalized_grade, "unknown")
+    return GRADE_REMARK.get(
+        normalized_grade,
+        "unknown",
+    )
 
 
-# ===================== calculate student_grade =======================
-def calculate_student_grade(results):
+# ===================== calculate student grade ======================================
+
+def calculate_student_grade(
+    results,
+    school_id=None,
+):
     total = calculate_total(results)
     average = calculate_overall_average(results)
-    grade = calculate_grade(average)
-    remark = calculate_remark(grade)
+
+    grade = calculate_grade(
+        average,
+        school_id=school_id,
+    )
+
+    remark = calculate_remark(
+        grade,
+        school_id=school_id,
+    )
 
     return {
         "total": total,
@@ -213,27 +246,41 @@ def calculate_student_grade(results):
     }
 
 
-# ===================== term-level aggregation =======================
-def calculate_student_term_grades(student_id: int, term_id: int) -> dict:
+# ===================== term-level aggregation =======================================
+
+def calculate_student_term_grades(
+    student_id: int,
+    term_id: int,
+    school_id: int = None,
+) -> dict:
     """
     Fetch all exam results for a student in a specific term,
-    group by subject, and calculate subject scores, overall average,
-    overall grade, and overall remark.
+    calculate subject-level performance, and calculate the
+    overall term performance.
+
+    school_id is optional for backwards compatibility with
+    existing callers, but report-card generation should provide it.
     """
+
     from school_app.models.result import Result
     from school_app.models.exam import Exam
 
-    # Query all results for the student strictly scoped to exams
-    # in the given term.
-    results = (
+    query = (
         db.session.query(Result)
         .join(Exam)
         .filter(
             Result.student_id == student_id,
             Exam.term_id == term_id,
         )
-        .all()
     )
+
+    if school_id is not None:
+        query = query.filter(
+            Result.school_id == school_id,
+            Exam.school_id == school_id,
+        )
+
+    results = query.all()
 
     if not results:
         return {
@@ -243,14 +290,24 @@ def calculate_student_term_grades(student_id: int, term_id: int) -> dict:
             "remark": "No results found",
         }
 
-    # Calculate per-subject percentage scores.
     grouped = _group_by_subject(results)
+
     subject_scores = {}
 
     for subject_id, subject_results in grouped.items():
-        score = calculate_subject_score(subject_results)
-        subject_grade = calculate_grade(score)
-        subject_remark = calculate_remark(subject_grade)
+        score = calculate_subject_score(
+            subject_results
+        )
+
+        subject_grade = calculate_grade(
+            score,
+            school_id=school_id,
+        )
+
+        subject_remark = calculate_remark(
+            subject_grade,
+            school_id=school_id,
+        )
 
         subject_scores[str(subject_id)] = {
             "score": round(score, 2),
@@ -259,8 +316,16 @@ def calculate_student_term_grades(student_id: int, term_id: int) -> dict:
         }
 
     overall_avg = calculate_overall_average(results)
-    overall_grade = calculate_grade(overall_avg)
-    overall_remark = calculate_remark(overall_grade)
+
+    overall_grade = calculate_grade(
+        overall_avg,
+        school_id=school_id,
+    )
+
+    overall_remark = calculate_remark(
+        overall_grade,
+        school_id=school_id,
+    )
 
     return {
         "subject_scores": subject_scores,

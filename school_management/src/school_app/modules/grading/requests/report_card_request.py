@@ -1,5 +1,7 @@
 from typing import Optional, Any, Dict
+
 from pydantic import BaseModel, ConfigDict, Field
+
 from school_app.enums.reportcard import ReportCardStatus
 
 
@@ -14,16 +16,29 @@ class ReportCardStatusUpdateRequest(BaseModel):
 
 
 class ReportCardSetPinRequest(BaseModel):
-    pin: str = Field(..., min_length=4, max_length=10)
+    pin: str = Field(
+        ...,
+        min_length=4,
+        max_length=10,
+    )
 
 
 class ReportCardPublicVerifyRequest(BaseModel):
-    reference: str
-    pin: Optional[str] = None
+    reference: str = Field(
+        ...,
+        min_length=1,
+    )
+    pin: Optional[str] = Field(
+        default=None,
+        min_length=4,
+        max_length=10,
+    )
 
 
 class ReportCardResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+    )
 
     id: int
     student_id: int
@@ -31,4 +46,6 @@ class ReportCardResponse(BaseModel):
     term_id: int
     status: ReportCardStatus
     public_reference: str
-    summary_data: Optional[Dict[str, Any]] = None
+    summary_data: Optional[
+        Dict[str, Any]
+    ] = None

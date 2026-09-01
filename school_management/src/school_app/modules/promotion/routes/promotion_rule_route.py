@@ -26,7 +26,11 @@ promotion_rule_bp = Blueprint("promotion_rule", __name__, url_prefix="/promotion
 @role_required(Role.ADMIN)
 @validate_request(PromotionRuleCreateRequest)
 def create_rule(data: PromotionRuleCreateRequest):
-    rule = create_promotion_rule(data, actor_id=g.user.id)
+    school_id = getattr(g.user, "school_id", None)
+    if school_id is None:
+        abort(403, description="School context is required to manage promotion rules.")
+
+    rule = create_promotion_rule(data, actor_id=g.user.id, school_id=school_id)
     return jsonify(PromotionRuleResponse.model_validate(rule).model_dump()), 201
 
 
@@ -35,9 +39,13 @@ def create_rule(data: PromotionRuleCreateRequest):
 @promotion_rule_bp.route("", methods=["GET"])
 @role_required(Role.ADMIN, Role.TEACHER)
 def get_all_rules():
+    school_id = getattr(g.user, "school_id", None)
+    if school_id is None:
+        abort(403, description="School context is required to view promotion rules.")
+
     from_level_id = request.args.get("from_level_id", None, type=int)
     include_inactive = request.args.get("include_inactive", False, type=bool)
-    rules = get_all_promotion_rules(from_level_id=from_level_id, include_inactive=include_inactive)
+    rules = get_all_promotion_rules(from_level_id=from_level_id, include_inactive=include_inactive, school_id=school_id)
     return jsonify([PromotionRuleResponse.model_validate(r).model_dump() for r in rules]), 200
 
 
@@ -46,7 +54,11 @@ def get_all_rules():
 @promotion_rule_bp.route("/<int:rule_id>", methods=["GET"])
 @role_required(Role.ADMIN, Role.TEACHER)
 def get_rule(rule_id):
-    rule = get_promotion_rule(rule_id)
+    school_id = getattr(g.user, "school_id", None)
+    if school_id is None:
+        abort(403, description="School context is required to view promotion rules.")
+
+    rule = get_promotion_rule(rule_id, school_id=school_id)
     if rule is None:
         abort(404, description="Promotion rule not found")
     return jsonify(PromotionRuleResponse.model_validate(rule).model_dump()), 200
@@ -58,7 +70,11 @@ def get_rule(rule_id):
 @role_required(Role.ADMIN)
 @validate_request(PromotionRuleUpdateRequest)
 def update_rule(data: PromotionRuleUpdateRequest, rule_id):
-    rule = update_promotion_rule(data, rule_id, actor_id=g.user.id)
+    school_id = getattr(g.user, "school_id", None)
+    if school_id is None:
+        abort(403, description="School context is required to manage promotion rules.")
+
+    rule = update_promotion_rule(data, rule_id, actor_id=g.user.id, school_id=school_id)
     if rule is None:
         abort(404, description="Promotion rule not found")
     return jsonify(PromotionRuleResponse.model_validate(rule).model_dump()), 200
@@ -69,6 +85,10 @@ def update_rule(data: PromotionRuleUpdateRequest, rule_id):
 @promotion_rule_bp.route("/<int:rule_id>", methods=["DELETE"])
 @role_required(Role.ADMIN)
 def delete_rule(rule_id):
-    if not delete_promotion_rule(rule_id, actor_id=g.user.id):
+    school_id = getattr(g.user, "school_id", None)
+    if school_id is None:
+        abort(403, description="School context is required to manage promotion rules.")
+
+    if not delete_promotion_rule(rule_id, actor_id=g.user.id, school_id=school_id):
         abort(404, description="Promotion rule not found")
     return jsonify({"message": "Promotion rule deleted successfully"}), 200

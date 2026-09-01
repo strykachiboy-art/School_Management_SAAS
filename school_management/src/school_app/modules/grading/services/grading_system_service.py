@@ -144,14 +144,20 @@ def delete_grading_system(system_id, actor_id):
     return True
 
 
+
 # ============================ create grading rule ============================
 
 def create_grading_rule(data, actor_id):
     system = db.session.get(GradingSystem, data.grading_system_id)
+
     if system is None:
-        abort(404, description=f"Grading system with ID {data.grading_system_id} not found.")
+        abort(
+            404,
+            description=f"Grading system with ID {data.grading_system_id} not found.",
+        )
 
     rule = GradingRule(
+        school_id=system.school_id,
         grading_system_id=data.grading_system_id,
         grade_name=data.grade_name,
         min_score=data.min_score,
@@ -160,20 +166,24 @@ def create_grading_rule(data, actor_id):
         remark=data.remark,
         display_order=data.display_order,
     )
+
     db.session.add(rule)
 
     try:
         db.session.flush()
     except IntegrityError:
         db.session.rollback()
-        abort(400, description="Could not create grading rule — check for a duplicate grade name within this system.")
+        abort(
+            400,
+            description="Could not create grading rule — check for a duplicate grade name within this system.",
+        )
 
     create_audit_log(
         actor_id=actor_id,
         action=AuditAction.CREATE,
         resource_type="GradingRule",
         resource_id=rule.id,
-        description=f"Created grading rule {rule.grade_name} under {system.name}",
+        description=f"Created grading rule '{rule.grade_name}'",
     )
 
     db.session.commit()

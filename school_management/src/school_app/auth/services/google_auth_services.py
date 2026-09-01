@@ -25,7 +25,7 @@ def verify_google_token(credential):
     except ValueError:
         return None, "Invalid or expired Google token"
 
-def find_or_create_google_user(google_data):
+def find_or_create_google_user(google_data, school_id=None):
     google_id = google_data.get("sub")
     email = google_data.get("email")
 
@@ -54,7 +54,8 @@ def find_or_create_google_user(google_data):
         email=email,
         username=username,
         google_id=google_id,
-        password=None, 
+        password=None,
+        school_id=school_id,
     )
 
     db.session.add(new_user)
@@ -65,12 +66,13 @@ def find_or_create_google_user(google_data):
 def authenticate_google_user(payload):
     """Main service layer workflow called by the Flask route."""
     credential = payload.get("credential") if payload else None
+    school_id = payload.get("school_id") if payload else None
     google_data, error = verify_google_token(credential)
 
     if error:
         return {"error": error}, 401
 
-    user = find_or_create_google_user(google_data)
+    user = find_or_create_google_user(google_data, school_id=school_id)
     tokens = issue_tokens(user) 
 
     return {

@@ -8,18 +8,19 @@ from school_app.extensions import limiter
 @limiter.limit("10 per minute")
 @jwt_required(refresh=True)  # <-- WE MUST HAVE refresh=True
 def refresh():
-    print("REACHED REFRESH ROUTE!")
     # 1. Extract values from decoded JWT payload
     user_id = get_jwt_identity()
     jwt_payload = get_jwt()
     current_jti = jwt_payload["jti"]
     role = jwt_payload.get("role")
+    school_id = jwt_payload.get("school_id")
 
     # 2. Call service function
     new_token, error = refresh_access_token(
         user_id=user_id,
         current_jti=current_jti,
-        role=role
+        role=role,
+        school_id=school_id,
     )
 
     # 3. Handle errors

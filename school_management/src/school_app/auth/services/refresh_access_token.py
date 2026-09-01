@@ -3,7 +3,7 @@ from school_app.extensions import redis_client
 import redis
 
 
-def refresh_access_token(user_id: str, current_jti: str, role: str) -> tuple[str | None, str | None]:
+def refresh_access_token(user_id: str, current_jti: str, role: str, school_id: int | None = None) -> tuple[str | None, str | None]:
     
     try:
         cached_jti = redis_client.get(f"refresh_whitelist:{user_id}")
@@ -19,9 +19,13 @@ def refresh_access_token(user_id: str, current_jti: str, role: str) -> tuple[str
         return None, "Refresh token is invalid, expired, or has been revoked."
 
     # 4. Issue a new access token
+    claims = {"role": role} if role else {}
+    if school_id is not None:
+        claims["school_id"] = school_id
+
     new_access_token = create_access_token(
         identity=str(user_id),
-        additional_claims={"role": role} if role else {}
+        additional_claims=claims,
     )
 
     return new_access_token, None

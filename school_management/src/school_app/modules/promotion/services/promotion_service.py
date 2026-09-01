@@ -163,7 +163,7 @@ def evaluate_student_promotion(student_id, academic_session_id, school_id=None):
     )
     current_level = _get_current_level(current_classroom)
     rule = (
-        get_active_rule_for_level(current_level.id)
+        get_active_rule_for_level(current_level.id, school_id)
         if current_level is not None
         else None
     )
@@ -272,7 +272,7 @@ def promote_student(
     to_level = _get_current_level(to_classroom)
 
     rule = (
-        get_active_rule_for_level(from_level.id)
+        get_active_rule_for_level(from_level.id, school_id)
         if from_level is not None
         else None
     )

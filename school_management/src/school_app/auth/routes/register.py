@@ -15,7 +15,12 @@ profile_schema = ProfileSchema()
 @limiter.limit("3 per minute")
 @validate_request(RegisterRequest)
 def register(payload: RegisterRequest):
-    user, error = register_user(payload.username, payload.email, payload.password)
+    user, error = register_user(
+        payload.username,
+        payload.email,
+        payload.password,
+        school_id=payload.school_id,
+    )
 
     if error:
         return jsonify({"error": error}), 400

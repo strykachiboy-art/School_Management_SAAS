@@ -10,20 +10,28 @@ from school_app.enums.audit import AuditAction
 
 # ============================ create promotion rule ============================
 
-def create_promotion_rule(data, actor_id):
+def create_promotion_rule(data, actor_id, school_id=None):
+    if school_id is None:
+        abort(400, description="School context is required to create a promotion rule.")
+
     from_level = db.session.get(AcademicLevel, data.from_level_id)
     if from_level is None:
         abort(404, description=f"Academic level with ID {data.from_level_id} not found.")
+    if from_level.school_id != school_id:
+        abort(403, description="Academic level does not belong to the current school.")
 
     if data.to_level_id is not None:
         to_level = db.session.get(AcademicLevel, data.to_level_id)
         if to_level is None:
             abort(404, description=f"Academic level with ID {data.to_level_id} not found.")
+        if to_level.school_id != school_id:
+            abort(403, description="Target academic level does not belong to the current school.")
 
     if data.is_active:
-        _deactivate_existing_active_rule(data.from_level_id)
+        _deactivate_existing_active_rule(data.from_level_id, school_id)
 
     rule = PromotionRule(
+        school_id=school_id,
         name=data.name,
         from_level_id=data.from_level_id,
         to_level_id=data.to_level_id,
@@ -54,20 +62,23 @@ def create_promotion_rule(data, actor_id):
     return rule
 
 
-def _deactivate_existing_active_rule(from_level_id):
-    """At most one active PromotionRule per from_level_id — enforced here,
-    not a DB constraint, same approach as GradingSystem.is_default."""
-    db.session.execute(
-        db.update(PromotionRule)
-        .where(PromotionRule.from_level_id == from_level_id, PromotionRule.is_active.is_(True))
-        .values(is_active=False)
+def _deactivate_existing_active_rule(from_level_id, school_id=None):
+    """At most one active PromotionRule per from_level_id within a school."""
+    stmt = db.update(PromotionRule).where(
+        PromotionRule.from_level_id == from_level_id,
+        PromotionRule.is_active.is_(True),
     )
+    if school_id is not None:
+        stmt = stmt.where(PromotionRule.school_id == school_id)
+    db.session.execute(stmt.values(is_active=False))
 
 
 # =============================== get all promotion rules =============================
 
-def get_all_promotion_rules(from_level_id=None, include_inactive=False):
+def get_all_promotion_rules(from_level_id=None, include_inactive=False, school_id=None):
     stmt = db.select(PromotionRule)
+    if school_id is not None:
+        stmt = stmt.where(PromotionRule.school_id == school_id)
     if from_level_id is not None:
         stmt = stmt.where(PromotionRule.from_level_id == from_level_id)
     if not include_inactive:
@@ -77,31 +88,36 @@ def get_all_promotion_rules(from_level_id=None, include_inactive=False):
 
 # ============================== get promotion rule ===================================
 
-def get_promotion_rule(rule_id):
-    return db.session.get(PromotionRule, rule_id)
+def get_promotion_rule(rule_id, school_id=None):
+    stmt = db.select(PromotionRule).where(PromotionRule.id == rule_id)
+    if school_id is not None:
+        stmt = stmt.where(PromotionRule.school_id == school_id)
+    return db.session.scalars(stmt).first()
 
 
-def get_active_rule_for_level(level_id):
-    """The lookup promotion_service actually uses. Returns the single
-    active PromotionRule for a level, or None if the level has no active
-    rule configured — callers fall back to hardcoded defaults in that
-    case, same pattern as grading_system_service's default-system lookup.
-    """
+def get_active_rule_for_level(level_id, school_id=None):
+    """Return the active school-scoped promotion rule for a level."""
     stmt = db.select(PromotionRule).where(
-        PromotionRule.from_level_id == level_id, PromotionRule.is_active.is_(True)
+        PromotionRule.from_level_id == level_id,
+        PromotionRule.is_active.is_(True),
     )
+    if school_id is not None:
+        stmt = stmt.where(PromotionRule.school_id == school_id)
     return db.session.scalars(stmt).first()
 
 
 # ============================== update promotion rule =================================
 
-def update_promotion_rule(data, rule_id, actor_id):
-    rule = db.session.get(PromotionRule, rule_id)
+def update_promotion_rule(data, rule_id, actor_id, school_id=None):
+    stmt = db.select(PromotionRule).where(PromotionRule.id == rule_id)
+    if school_id is not None:
+        stmt = stmt.where(PromotionRule.school_id == school_id)
+    rule = db.session.scalars(stmt).first()
     if rule is None:
         return None
 
     if data.is_active is True and not rule.is_active:
-        _deactivate_existing_active_rule(rule.from_level_id)
+        _deactivate_existing_active_rule(rule.from_level_id, rule.school_id)
 
     changes = {}
     if data.name is not None and data.name != rule.name:
@@ -151,8 +167,11 @@ def update_promotion_rule(data, rule_id, actor_id):
 
 # ============================== delete promotion rule =================================
 
-def delete_promotion_rule(rule_id, actor_id):
-    rule = db.session.get(PromotionRule, rule_id)
+def delete_promotion_rule(rule_id, actor_id, school_id=None):
+    stmt = db.select(PromotionRule).where(PromotionRule.id == rule_id)
+    if school_id is not None:
+        stmt = stmt.where(PromotionRule.school_id == school_id)
+    rule = db.session.scalars(stmt).first()
     if rule is None:
         return False
 

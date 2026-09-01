@@ -264,10 +264,6 @@ def test_calculate_overall_average_uses_equal_average_for_default_weights():
 
 
 def test_calculate_overall_average_weighted_results():
-    """
-    Higher-weighted results should have a greater influence on the
-    overall average if the service supports exam weighting.
-    """
     results = [
         FakeResult(80, subject_id=1, weight=2.0),
         FakeResult(60, subject_id=2, weight=1.0),

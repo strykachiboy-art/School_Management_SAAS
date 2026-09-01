@@ -1,13 +1,18 @@
 import uuid
-from datetime import date, time
+from datetime import date, datetime, time
+import secrets
+from sqlalchemy import Index, text
 
 import pytest
+from sqlalchemy import UniqueConstraint
 from flask_jwt_extended import create_access_token
 
 from school_app import create_app
 from school_app.enums.attendance import AttendanceStatus
 from school_app.enums.day_of_week import DayOfWeek
+from school_app.enums.enrollment import EnrollmentStatus
 from school_app.enums.notification import NotificationType
+from school_app.enums.reportcard import ReportCardStatus
 from school_app.extensions import db as _db, limiter, redis_client
 
 from school_app.models.academic_session import AcademicSession
@@ -17,9 +22,11 @@ from school_app.models.classroom import Classroom
 from school_app.models.exam import Exam
 from school_app.models.notification import Notification
 from school_app.models.parent_guardian import ParentGuardian
+from school_app.models.reportcard import ReportCard
 from school_app.models.result import Result
 from school_app.models.school import School
 from school_app.models.student import Student
+from school_app.models.student_enrollment import StudentEnrollment
 from school_app.models.subject import Subject
 from school_app.models.teacher import Teacher
 from school_app.models.term import Term
@@ -33,13 +40,6 @@ from school_app.models.user import User
 
 @pytest.fixture(scope="function")
 def app():
-    """
-    Create a completely isolated Flask application and database
-    for every test.
-
-    Every test gets a brand-new in-memory SQLite database.
-    """
-
     test_config = {
         "TESTING": True,
         "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:",
@@ -53,12 +53,115 @@ def app():
     app = create_app(config=test_config)
 
     with app.app_context():
+
+        enrollment_table = StudentEnrollment.__table__
+
+        enrollment_columns = {
+            "school_id",
+            "student_id",
+            "academic_session_id",
+        }
+
+        # --------------------------------------------------------------
+        # Remove any legacy unconditional UNIQUE constraints/indexes
+        # from SQLAlchemy metadata before create_all().
+        # --------------------------------------------------------------
+
+        removed_constraints = []
+        removed_indexes = []
+
+        for constraint in list(enrollment_table.constraints):
+            if isinstance(constraint, UniqueConstraint):
+                constraint_columns = {
+                    column.name
+                    for column in constraint.columns
+                }
+
+                if constraint_columns == enrollment_columns:
+                    enrollment_table.constraints.remove(constraint)
+                    removed_constraints.append(constraint)
+
+        for index in list(enrollment_table.indexes):
+            if not index.unique:
+                continue
+
+            index_columns = {
+                column.name
+                for column in index.columns
+            }
+
+            if index_columns != enrollment_columns:
+                continue
+
+            if index.name == "uq_active_student_enrollment":
+                continue
+
+            enrollment_table.indexes.remove(index)
+            removed_indexes.append(index)
+
+        # --------------------------------------------------------------
+        # Create the test database.
+        # --------------------------------------------------------------
+
         _db.create_all()
 
-        yield app
+        # --------------------------------------------------------------
+        # SQLite safety net:
+        #
+        # Remove any physical unconditional unique index that may have
+        # been created by another model/import.
+        #
+        # We keep only the intended partial unique index.
+        # --------------------------------------------------------------
 
-        _db.session.remove()
-        _db.drop_all()
+        if _db.engine.dialect.name == "sqlite":
+
+            rows = _db.session.execute(
+                text("PRAGMA index_list('student_enrollments')")
+            ).fetchall()
+
+            for row in rows:
+                index_name = row[1]
+                is_unique = row[2]
+
+                if not is_unique:
+                    continue
+
+                if index_name == "uq_active_student_enrollment":
+                    continue
+
+                index_info = _db.session.execute(
+                    text(
+                        f'PRAGMA index_info("{index_name}")'
+                    )
+                ).fetchall()
+
+                index_columns = {
+                    info[2]
+                    for info in index_info
+                }
+
+                if index_columns == enrollment_columns:
+                    _db.session.execute(
+                        text(
+                            f'DROP INDEX IF EXISTS "{index_name}"'
+                        )
+                    )
+
+            _db.session.commit()
+
+        try:
+            yield app
+
+        finally:
+            _db.session.remove()
+            _db.drop_all()
+
+            for constraint in removed_constraints:
+                enrollment_table.append_constraint(constraint)
+
+            for index in removed_indexes:
+                enrollment_table.append_constraint(index)
 
 
 @pytest.fixture(scope="function")
@@ -79,11 +182,10 @@ def db_session(app, db):
 
 @pytest.fixture
 def school(app):
-    """
-    Creates the default school used by most tenant-scoped tests.
-    """
+    """Creates the default school used by most tenant-scoped tests."""
 
     with app.app_context():
+
         school = School(
             name="Test School",
             slug="test-school",
@@ -109,7 +211,9 @@ def auto_clear_limiter(app):
     yield
 
     with app.app_context():
+
         if getattr(limiter, "_storage", None) is not None:
+
             try:
                 limiter.reset()
             except Exception:
@@ -127,6 +231,7 @@ def auto_clear_redis(app):
     yield
 
     with app.app_context():
+
         try:
             keys = redis_client.keys("refresh_whitelist:*")
 
@@ -154,6 +259,7 @@ def json_client(client):
     """
 
     class JSONClient:
+
         def __init__(self, test_client):
             self.c = test_client
             self.headers = {
@@ -192,6 +298,7 @@ def admin_client(client, admin_headers):
     """
 
     class AdminClient:
+
         def __init__(self, test_client):
             self.c = test_client
             self.headers = admin_headers
@@ -230,6 +337,7 @@ def admin_stage(app, school):
     """Creates a default AcademicStage for the test school."""
 
     with app.app_context():
+
         stage = AcademicStage(
             name=f"Stage {uuid.uuid4().hex[:6]}",
             display_order=1,
@@ -251,18 +359,6 @@ def admin_stage(app, school):
 
 @pytest.fixture
 def make_user(app, school):
-    """
-    General-purpose User factory.
-
-    Usage:
-
-        make_user("one", "student")
-        make_user("teacher1", "teacher")
-        make_user("admin1", "admin")
-        make_user("platform1", "platform_admin")
-
-    Platform admins automatically receive school_id=None.
-    """
 
     _UNSET = object()
 
@@ -273,12 +369,12 @@ def make_user(app, school):
     ):
         with app.app_context():
 
-            # Platform administrators are global and therefore
-            # must not belong to a school tenant.
             if role == "platform_admin":
                 resolved_school_id = None
+
             elif school_id is _UNSET:
                 resolved_school_id = school.id
+
             else:
                 resolved_school_id = school_id
 
@@ -307,9 +403,9 @@ def make_user(app, school):
 
 @pytest.fixture
 def make_teacher(app, school):
-    """Factory for creating Teacher + User records."""
 
     def _make(suffix="1"):
+
         with app.app_context():
 
             user = User(
@@ -342,9 +438,9 @@ def make_teacher(app, school):
 
 @pytest.fixture
 def make_student(app, school):
-    """Factory for creating Student + User records."""
 
     def _make(suffix="1"):
+
         with app.app_context():
 
             user = User(
@@ -377,9 +473,9 @@ def make_student(app, school):
 
 @pytest.fixture
 def make_parent(app, school):
-    """Factory for creating ParentGuardian + User records."""
 
     def _make(suffix="1"):
+
         with app.app_context():
 
             user = User(
@@ -419,9 +515,9 @@ def make_parent(app, school):
 
 @pytest.fixture
 def make_classroom(app, school):
-    """Factory for creating classrooms."""
 
     def _make(suffix="1"):
+
         with app.app_context():
 
             classroom = Classroom(
@@ -443,7 +539,6 @@ def make_classroom(app, school):
 
 @pytest.fixture
 def make_notification(app):
-    """Factory for creating Notification records."""
 
     def _make(
         recipient_user_id,
@@ -452,6 +547,7 @@ def make_notification(app):
         notification_type=NotificationType.GENERAL,
         is_read=False,
     ):
+
         with app.app_context():
 
             notification = Notification(
@@ -482,7 +578,6 @@ def make_exam(
     school,
     term,
 ):
-    """Factory for creating exams."""
 
     def _make(
         suffix="1",
@@ -495,14 +590,13 @@ def make_exam(
         duration_minutes=90,
         total_marks=100,
     ):
+
         with app.app_context():
 
             subject_obj = subject_obj or subject
             classroom_obj = classroom_obj or classroom
             session_obj = session_obj or academic_session
-
-            if term_obj is None:
-                term_obj = term
+            term_obj = term_obj or term
 
             exam = Exam(
                 school_id=school.id,
@@ -531,13 +625,13 @@ def make_exam(
 
 @pytest.fixture
 def make_result(app, student, exam, school):
-    """Factory for creating Result records."""
 
     def _make(
         student_obj=None,
         exam_obj=None,
         marks=85.5,
     ):
+
         with app.app_context():
 
             student_obj = student_obj or student
@@ -570,7 +664,6 @@ def make_timetable(
     teacher,
     school,
 ):
-    """Factory for creating Timetable records."""
 
     def _make(
         term_obj=None,
@@ -582,6 +675,7 @@ def make_timetable(
         start_time_val=time(8, 0),
         end_time_val=time(9, 0),
     ):
+
         with app.app_context():
 
             term_obj = term_obj or term
@@ -613,7 +707,6 @@ def make_timetable(
 
 @pytest.fixture
 def make_attendance(app, student, term, school):
-    """Factory for creating Attendance records."""
 
     def _make(
         student_obj=None,
@@ -621,6 +714,7 @@ def make_attendance(app, student, term, school):
         date_val=date(2026, 9, 10),
         status=AttendanceStatus.PRESENT,
     ):
+
         with app.app_context():
 
             student_obj = student_obj or student
@@ -646,7 +740,175 @@ def make_attendance(app, student, term, school):
 
 
 # ======================================================================
-# 9. STANDARD MODEL FIXTURES
+# 9. STUDENT ENROLLMENT FACTORY
+# ======================================================================
+
+@pytest.fixture
+def make_enrollment(
+    app,
+    student,
+    classroom,
+    academic_session,
+    school,
+):
+
+    def _make(
+        student_obj=None,
+        classroom_obj=None,
+        session_obj=None,
+        status=EnrollmentStatus.ACTIVE,
+        enrollment_date=None,
+        withdrawal_date=None,
+        enrollment_date_val=None,
+        withdrawal_date_val=None,
+        remarks=None,
+        recorded_by=None,
+        school_id=None,
+    ):
+
+        with app.app_context():
+
+            student_obj = student_obj or student
+            classroom_obj = classroom_obj or classroom
+            session_obj = session_obj or academic_session
+
+            # ----------------------------------------------------------
+            # Backward-compatible aliases.
+            # ----------------------------------------------------------
+
+            if enrollment_date_val is not None:
+                enrollment_date = enrollment_date_val
+
+            if withdrawal_date_val is not None:
+                withdrawal_date = withdrawal_date_val
+
+            # ----------------------------------------------------------
+            # Important:
+            #
+            # Do NOT automatically set withdrawal_date for historical
+            # statuses here.
+            #
+            # Tests should explicitly provide withdrawal_date when
+            # testing withdrawn records.
+            # ----------------------------------------------------------
+
+            enrollment = StudentEnrollment(
+                school_id=school.id if school_id is None else school_id,
+                student_id=student_obj.id,
+                classroom_id=(
+                    classroom_obj.id
+                    if classroom_obj is not None
+                    else None
+                ),
+                academic_session_id=session_obj.id,
+                status=status,
+                enrollment_date=enrollment_date,
+                withdrawal_date=withdrawal_date,
+                remarks=remarks,
+                recorded_by=recorded_by,
+            )
+
+            _db.session.add(enrollment)
+            _db.session.commit()
+
+            _db.session.refresh(enrollment)
+            _db.session.expunge(enrollment)
+
+            return enrollment
+
+    return _make
+
+
+# ======================================================================
+# 10. REPORT CARD FACTORIES
+# ======================================================================
+
+@pytest.fixture
+def make_report_card(
+    app,
+    school,
+    student,
+    academic_session,
+    term,
+):
+
+    def _make(
+        student_obj=None,
+        session_obj=None,
+        term_obj=None,
+        status=ReportCardStatus.DRAFT,
+        public_reference=None,
+        access_pin=None,
+        summary_data=None,
+        school_id=None,
+    ):
+
+        with app.app_context():
+
+            student_obj = student_obj or student
+            session_obj = session_obj or academic_session
+            term_obj = term_obj or term
+
+            report = ReportCard(
+                school_id=school.id if school_id is None else school_id,
+                student_id=student_obj.id,
+                academic_session_id=session_obj.id,
+                term_id=term_obj.id,
+                status=status,
+                public_reference=(
+                    public_reference
+                    or secrets.token_urlsafe(16)
+                ),
+            )
+
+            if summary_data is not None:
+                report.summary_data = summary_data
+
+            if access_pin is not None:
+                report.set_access_pin(access_pin)
+
+            _db.session.add(report)
+            _db.session.commit()
+
+            _db.session.refresh(report)
+            _db.session.expunge(report)
+
+            return report
+
+    return _make
+
+
+@pytest.fixture
+def published_report_card(make_report_card):
+
+    return make_report_card(
+        status=ReportCardStatus.PUBLISHED,
+        summary_data={
+            "subject_scores": {},
+            "overall_average": 75.0,
+            "grade": "A",
+            "remark": "Excellent",
+        },
+    )
+
+
+@pytest.fixture
+def published_report_card_with_pin(make_report_card):
+
+    return make_report_card(
+        status=ReportCardStatus.PUBLISHED,
+        access_pin="1234",
+        summary_data={
+            "subject_scores": {},
+            "overall_average": 75.0,
+            "grade": "A",
+            "remark": "Excellent",
+        },
+    )
+
+
+# ======================================================================
+# 11. STANDARD MODEL FIXTURES
 # ======================================================================
 
 @pytest.fixture
@@ -691,6 +953,7 @@ def parent(make_parent):
 
 @pytest.fixture
 def subject(app, school):
+
     with app.app_context():
 
         subject = Subject(
@@ -710,6 +973,7 @@ def subject(app, school):
 
 @pytest.fixture
 def classroom(app, school):
+
     with app.app_context():
 
         classroom = Classroom(
@@ -729,6 +993,7 @@ def classroom(app, school):
 
 @pytest.fixture
 def academic_session(app, school):
+
     with app.app_context():
 
         session = AcademicSession(
@@ -736,6 +1001,7 @@ def academic_session(app, school):
             start_date=date(2026, 9, 1),
             end_date=date(2027, 6, 1),
             school_id=school.id,
+            is_active=True,
         )
 
         _db.session.add(session)
@@ -749,6 +1015,7 @@ def academic_session(app, school):
 
 @pytest.fixture
 def term(app, academic_session, school):
+
     with app.app_context():
 
         term = Term(
@@ -789,12 +1056,18 @@ def attendance_record(make_attendance):
 
 
 @pytest.fixture
+def enrollment(make_enrollment):
+    return make_enrollment()
+
+
+@pytest.fixture
 def notification(make_notification, student):
     return make_notification(student.user_id)
 
 
 @pytest.fixture
 def sample_absent_attendance(make_attendance, student, term):
+
     return make_attendance(
         student_obj=student,
         term_obj=term,
@@ -805,6 +1078,7 @@ def sample_absent_attendance(make_attendance, student, term):
 
 @pytest.fixture
 def sample_present_attendance(make_attendance, student, term):
+
     return make_attendance(
         student_obj=student,
         term_obj=term,
@@ -820,6 +1094,7 @@ def student_in_teacher_classroom(
     classroom,
     student,
 ):
+
     with app.app_context():
 
         classroom_db = _db.session.merge(classroom)
@@ -837,11 +1112,10 @@ def student_in_teacher_classroom(
 
 
 # ======================================================================
-# 10. JWT HELPERS
+# 12. JWT HELPERS
 # ======================================================================
 
 def _make_jwt_headers(app, user_id, role):
-    """Internal helper for generating JWT headers."""
 
     with app.app_context():
 
@@ -859,18 +1133,11 @@ def _make_jwt_headers(app, user_id, role):
 
 
 # ======================================================================
-# 11. PLATFORM ADMIN AUTH
+# 13. PLATFORM ADMIN AUTH
 # ======================================================================
 
 @pytest.fixture
 def platform_admin_headers(app, make_user):
-    """
-    Creates a real platform administrator.
-
-    IMPORTANT:
-    Platform admins must have school_id=None because User.is_platform_admin
-    checks that condition.
-    """
 
     user = make_user(
         suffix="platform_admin",
@@ -886,7 +1153,7 @@ def platform_admin_headers(app, make_user):
 
 
 # ======================================================================
-# 12. NORMAL ADMIN AUTH
+# 14. NORMAL ADMIN AUTH
 # ======================================================================
 
 @pytest.fixture
@@ -912,15 +1179,11 @@ def admin_headers(app, db_session, school):
 
 @pytest.fixture
 def admin_auth_headers(admin_headers):
-    """Alias retained for existing tests."""
     return admin_headers
 
 
 @pytest.fixture
 def admin_actor_id(app, admin_headers, school):
-    """
-    Returns the user ID of a tenant admin.
-    """
 
     with app.app_context():
 
@@ -947,20 +1210,14 @@ def admin_actor_id(app, admin_headers, school):
 
 
 # ======================================================================
-# 13. GENERIC AUTH HEADER FACTORY
+# 15. GENERIC AUTH HEADER FACTORY
 # ======================================================================
 
 @pytest.fixture
 def auth_headers(app):
-    """
-    Dynamic JWT header factory.
-
-    Example:
-
-        headers = auth_headers(user.id, "student")
-    """
 
     def _get_headers(user_id=1, role="admin"):
+
         return _make_jwt_headers(
             app,
             user_id,
@@ -971,11 +1228,12 @@ def auth_headers(app):
 
 
 # ======================================================================
-# 14. TEACHER AUTH
+# 16. TEACHER AUTH
 # ======================================================================
 
 @pytest.fixture
 def teacher_headers(app, teacher):
+
     return _make_jwt_headers(
         app,
         teacher.user_id,
@@ -984,11 +1242,12 @@ def teacher_headers(app, teacher):
 
 
 # ======================================================================
-# 15. STUDENT AUTH
+# 17. STUDENT AUTH
 # ======================================================================
 
 @pytest.fixture
 def student_headers(app, student):
+
     return _make_jwt_headers(
         app,
         student.user_id,
@@ -998,6 +1257,7 @@ def student_headers(app, student):
 
 @pytest.fixture
 def student2_headers(app, student2):
+
     return _make_jwt_headers(
         app,
         student2.user_id,
@@ -1006,11 +1266,12 @@ def student2_headers(app, student2):
 
 
 # ======================================================================
-# 16. PARENT AUTH
+# 18. PARENT AUTH
 # ======================================================================
 
 @pytest.fixture
 def parent_headers(app, parent):
+
     return _make_jwt_headers(
         app,
         parent.user_id,
@@ -1019,7 +1280,7 @@ def parent_headers(app, parent):
 
 
 # ======================================================================
-# 17. PASSWORD TEST USER
+# 19. PASSWORD TEST USER
 # ======================================================================
 
 @pytest.fixture

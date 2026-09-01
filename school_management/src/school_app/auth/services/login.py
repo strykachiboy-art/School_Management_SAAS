@@ -22,11 +22,15 @@ def authenticate_user(email: str, password: str) -> tuple[User | None, str | Non
 def issue_tokens(user: User) -> dict:
     """Create a fresh access + refresh token pair, and record the refresh token as the
     only valid one for this user (whitelist, for rotation)."""
+    claims = {"role": user.role}
+    if getattr(user, "school_id", None) is not None:
+        claims["school_id"] = user.school_id
+
     access_token = create_access_token(
-        identity=str(user.id), additional_claims={"role": user.role}
+        identity=str(user.id), additional_claims=claims
     )
     refresh_token = create_refresh_token(
-        identity=str(user.id), additional_claims={"role": user.role}
+        identity=str(user.id), additional_claims=claims
     )
 
     decoded = decode_token(refresh_token)
