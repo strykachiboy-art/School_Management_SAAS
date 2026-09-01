@@ -2,12 +2,14 @@ import uuid
 from datetime import date, time
 
 import pytest
+from flask_jwt_extended import create_access_token
 
 from school_app import create_app
 from school_app.enums.attendance import AttendanceStatus
 from school_app.enums.day_of_week import DayOfWeek
 from school_app.enums.notification import NotificationType
 from school_app.extensions import db as _db, limiter, redis_client
+
 from school_app.models.academic_session import AcademicSession
 from school_app.models.academic_stage import AcademicStage
 from school_app.models.attendance import Attendance
@@ -25,20 +27,19 @@ from school_app.models.timetable import Timetable
 from school_app.models.user import User
 
 
-# ----------------------------------------------------------------------
-# 1. Global Setup & Teardown Fixtures
-# ----------------------------------------------------------------------
+# ======================================================================
+# 1. APP / DATABASE FIXTURES
+# ======================================================================
 
 @pytest.fixture(scope="function")
 def app():
     """
-    Create a completely isolated Flask app with an in-memory SQLite
-    database for every test.
+    Create a completely isolated Flask application and database
+    for every test.
 
-    Because this fixture is function-scoped, every test gets a brand-new
-    database. Therefore, a separate autouse clean_database fixture is
-    NOT necessary.
+    Every test gets a brand-new in-memory SQLite database.
     """
+
     test_config = {
         "TESTING": True,
         "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:",
@@ -62,7 +63,7 @@ def app():
 
 @pytest.fixture(scope="function")
 def db(app):
-    """Provides the SQLAlchemy db instance for direct test manipulations."""
+    """Provides the SQLAlchemy db instance."""
     return _db
 
 
@@ -72,27 +73,39 @@ def db_session(app, db):
     return db.session
 
 
-@pytest.fixture(scope="function")
+# ======================================================================
+# 2. SCHOOL FIXTURE
+# ======================================================================
+
+@pytest.fixture
 def school(app):
-    """Creates a default tenant School that other fixtures attach to."""
+    """
+    Creates the default school used by most tenant-scoped tests.
+    """
+
     with app.app_context():
-        s = School(
+        school = School(
             name="Test School",
             slug="test-school",
         )
 
-        _db.session.add(s)
+        _db.session.add(school)
         _db.session.commit()
 
-        _db.session.refresh(s)
-        _db.session.expunge(s)
+        _db.session.refresh(school)
+        _db.session.expunge(school)
 
-        return s
+        return school
 
+
+# ======================================================================
+# 3. GLOBAL CLEANUP
+# ======================================================================
 
 @pytest.fixture(autouse=True)
 def auto_clear_limiter(app):
-    """Automatically resets Flask-Limiter state between tests."""
+    """Reset Flask-Limiter state after every test."""
+
     yield
 
     with app.app_context():
@@ -105,7 +118,12 @@ def auto_clear_limiter(app):
 
 @pytest.fixture(autouse=True)
 def auto_clear_redis(app):
-    """Cleans up Redis refresh-whitelist keys after each test."""
+    """
+    Remove refresh-token whitelist entries after every test.
+
+    Redis may not be running locally, so cleanup failures are ignored.
+    """
+
     yield
 
     with app.app_context():
@@ -119,24 +137,27 @@ def auto_clear_redis(app):
             pass
 
 
-# ----------------------------------------------------------------------
-# 2. HTTP Client Helpers
-# ----------------------------------------------------------------------
+# ======================================================================
+# 4. HTTP CLIENTS
+# ======================================================================
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 def client(app):
     return app.test_client()
 
 
 @pytest.fixture
 def json_client(client):
-    """A test client wrapper that attaches Accept: application/json."""
+    """
+    Test client wrapper that automatically sends
+    Accept: application/json.
+    """
 
     class JSONClient:
-        def __init__(self, c):
-            self.c = c
+        def __init__(self, test_client):
+            self.c = test_client
             self.headers = {
-                "Accept": "application/json"
+                "Accept": "application/json",
             }
 
         def _kwargs(self, kwargs):
@@ -166,11 +187,13 @@ def json_client(client):
 
 @pytest.fixture
 def admin_client(client, admin_headers):
-    """A test client wrapper that automatically attaches admin auth headers."""
+    """
+    Test client wrapper that automatically attaches admin auth.
+    """
 
     class AdminClient:
-        def __init__(self, c):
-            self.c = c
+        def __init__(self, test_client):
+            self.c = test_client
             self.headers = admin_headers
 
         def _kwargs(self, kwargs):
@@ -198,13 +221,14 @@ def admin_client(client, admin_headers):
     return AdminClient(client)
 
 
-# ----------------------------------------------------------------------
-# 3. Academic Stage Fixture
-# ----------------------------------------------------------------------
+# ======================================================================
+# 5. ACADEMIC STAGE
+# ======================================================================
 
 @pytest.fixture
 def admin_stage(app, school):
-    """Creates a default AcademicStage bound to the test school."""
+    """Creates a default AcademicStage for the test school."""
+
     with app.app_context():
         stage = AcademicStage(
             name=f"Stage {uuid.uuid4().hex[:6]}",
@@ -221,73 +245,49 @@ def admin_stage(app, school):
         return stage
 
 
-# ----------------------------------------------------------------------
-# 4. Model Factories
-# ----------------------------------------------------------------------
-
-@pytest.fixture
-def make_notification(app):
-    """Factory fixture for creating Notification records."""
-
-    def _make(
-        recipient_user_id,
-        title="Test Notification",
-        message="Test message",
-        notification_type=NotificationType.GENERAL,
-        is_read=False,
-    ):
-        with app.app_context():
-            n = Notification(
-                recipient_id=recipient_user_id,
-                title=title,
-                message=message,
-                notification_type=notification_type,
-                is_read=is_read,
-            )
-
-            _db.session.add(n)
-            _db.session.commit()
-
-            _db.session.refresh(n)
-            _db.session.expunge(n)
-
-            return n
-
-    return _make
-
-
-@pytest.fixture
-def notification(make_notification, student):
-    """Standard notification fixture owned by the student's user."""
-    return make_notification(student.user_id)
-
+# ======================================================================
+# 6. USER FACTORY
+# ======================================================================
 
 @pytest.fixture
 def make_user(app, school):
     """
-    Factory for creating users.
+    General-purpose User factory.
 
-    By default, users belong to the test school.
-    Pass school_id explicitly to override the school, including None.
+    Usage:
+
+        make_user("one", "student")
+        make_user("teacher1", "teacher")
+        make_user("admin1", "admin")
+        make_user("platform1", "platform_admin")
+
+    Platform admins automatically receive school_id=None.
     """
-    _DEFAULT = object()
+
+    _UNSET = object()
 
     def _make(
         suffix="1",
         role="student",
-        school_id=_DEFAULT,
+        school_id=_UNSET,
     ):
         with app.app_context():
+
+            # Platform administrators are global and therefore
+            # must not belong to a school tenant.
+            if role == "platform_admin":
+                resolved_school_id = None
+            elif school_id is _UNSET:
+                resolved_school_id = school.id
+            else:
+                resolved_school_id = school_id
+
             user = User(
                 username=f"user_{suffix}",
                 email=f"user_{suffix}@example.com",
                 password="hashed-placeholder",
                 role=role,
-                school_id=(
-                    school.id
-                    if school_id is _DEFAULT
-                    else school_id
-                ),
+                school_id=resolved_school_id,
             )
 
             _db.session.add(user)
@@ -301,13 +301,17 @@ def make_user(app, school):
     return _make
 
 
+# ======================================================================
+# 7. USER ROLE FACTORIES
+# ======================================================================
 
 @pytest.fixture
 def make_teacher(app, school):
-    """Factory fixture for creating teachers in the test school."""
+    """Factory for creating Teacher + User records."""
 
     def _make(suffix="1"):
         with app.app_context():
+
             user = User(
                 username=f"teacher_{suffix}",
                 email=f"teacher_{suffix}@example.com",
@@ -317,7 +321,7 @@ def make_teacher(app, school):
             )
 
             _db.session.add(user)
-            _db.session.commit()
+            _db.session.flush()
 
             teacher = Teacher(
                 user_id=user.id,
@@ -338,10 +342,11 @@ def make_teacher(app, school):
 
 @pytest.fixture
 def make_student(app, school):
-    """Factory fixture for creating students in the test school."""
+    """Factory for creating Student + User records."""
 
     def _make(suffix="1"):
         with app.app_context():
+
             user = User(
                 username=f"student_{suffix}",
                 email=f"student_{suffix}@example.com",
@@ -351,7 +356,7 @@ def make_student(app, school):
             )
 
             _db.session.add(user)
-            _db.session.commit()
+            _db.session.flush()
 
             student = Student(
                 user_id=user.id,
@@ -372,10 +377,11 @@ def make_student(app, school):
 
 @pytest.fixture
 def make_parent(app, school):
-    """Factory fixture for creating parent/guardian records."""
+    """Factory for creating ParentGuardian + User records."""
 
     def _make(suffix="1"):
         with app.app_context():
+
             user = User(
                 username=f"parent_{suffix}",
                 email=f"parent_{suffix}@example.com",
@@ -385,7 +391,7 @@ def make_parent(app, school):
             )
 
             _db.session.add(user)
-            _db.session.commit()
+            _db.session.flush()
 
             parent = ParentGuardian(
                 user_id=user.id,
@@ -407,12 +413,17 @@ def make_parent(app, school):
     return _make
 
 
+# ======================================================================
+# 8. MODEL FACTORIES
+# ======================================================================
+
 @pytest.fixture
 def make_classroom(app, school):
-    """Factory fixture for creating classrooms in the test school."""
+    """Factory for creating classrooms."""
 
     def _make(suffix="1"):
         with app.app_context():
+
             classroom = Classroom(
                 name=f"Room {suffix}",
                 capacity=30,
@@ -431,6 +442,38 @@ def make_classroom(app, school):
 
 
 @pytest.fixture
+def make_notification(app):
+    """Factory for creating Notification records."""
+
+    def _make(
+        recipient_user_id,
+        title="Test Notification",
+        message="Test message",
+        notification_type=NotificationType.GENERAL,
+        is_read=False,
+    ):
+        with app.app_context():
+
+            notification = Notification(
+                recipient_id=recipient_user_id,
+                title=title,
+                message=message,
+                notification_type=notification_type,
+                is_read=is_read,
+            )
+
+            _db.session.add(notification)
+            _db.session.commit()
+
+            _db.session.refresh(notification)
+            _db.session.expunge(notification)
+
+            return notification
+
+    return _make
+
+
+@pytest.fixture
 def make_exam(
     app,
     subject,
@@ -439,20 +482,28 @@ def make_exam(
     school,
     term,
 ):
-    """Factory fixture for creating exams."""
+    """Factory for creating exams."""
 
     def _make(
         suffix="1",
-        subject_obj=subject,
-        classroom_obj=classroom,
-        session_obj=academic_session,
-        term_obj=term,
+        subject_obj=None,
+        classroom_obj=None,
+        session_obj=None,
+        term_obj=None,
         exam_date_val=date(2026, 12, 1),
         start_time_val=time(9, 0),
         duration_minutes=90,
         total_marks=100,
     ):
         with app.app_context():
+
+            subject_obj = subject_obj or subject
+            classroom_obj = classroom_obj or classroom
+            session_obj = session_obj or academic_session
+
+            if term_obj is None:
+                term_obj = term
+
             exam = Exam(
                 school_id=school.id,
                 title=f"Exam {suffix}",
@@ -480,14 +531,18 @@ def make_exam(
 
 @pytest.fixture
 def make_result(app, student, exam, school):
-    """Factory fixture for creating results."""
+    """Factory for creating Result records."""
 
     def _make(
-        student_obj=student,
-        exam_obj=exam,
+        student_obj=None,
+        exam_obj=None,
         marks=85.5,
     ):
         with app.app_context():
+
+            student_obj = student_obj or student
+            exam_obj = exam_obj or exam
+
             result = Result(
                 school_id=school.id,
                 student_id=student_obj.id,
@@ -515,25 +570,27 @@ def make_timetable(
     teacher,
     school,
 ):
-    """
-    Factory fixture for creating Timetable entries.
-
-    All related records belong to the same test school by default.
-    """
+    """Factory for creating Timetable records."""
 
     def _make(
-        term_obj=term,
-        classroom_obj=classroom,
-        subject_obj=subject,
-        teacher_obj=teacher,
+        term_obj=None,
+        classroom_obj=None,
+        subject_obj=None,
+        teacher_obj=None,
         school_id=None,
         day_of_week=DayOfWeek.MONDAY,
         start_time_val=time(8, 0),
         end_time_val=time(9, 0),
     ):
         with app.app_context():
+
+            term_obj = term_obj or term
+            classroom_obj = classroom_obj or classroom
+            subject_obj = subject_obj or subject
+            teacher_obj = teacher_obj or teacher
+
             timetable = Timetable(
-                school_id=school_id or school.id,
+                school_id=school.id if school_id is None else school_id,
                 term_id=term_obj.id,
                 classroom_id=classroom_obj.id,
                 subject_id=subject_obj.id,
@@ -556,15 +613,19 @@ def make_timetable(
 
 @pytest.fixture
 def make_attendance(app, student, term, school):
-    """Factory fixture for creating attendance records."""
+    """Factory for creating Attendance records."""
 
     def _make(
-        student_obj=student,
-        term_obj=term,
+        student_obj=None,
+        term_obj=None,
         date_val=date(2026, 9, 10),
         status=AttendanceStatus.PRESENT,
     ):
         with app.app_context():
+
+            student_obj = student_obj or student
+            term_obj = term_obj or term
+
             attendance = Attendance(
                 student_id=student_obj.id,
                 term_id=term_obj.id,
@@ -584,9 +645,9 @@ def make_attendance(app, student, term, school):
     return _make
 
 
-# ----------------------------------------------------------------------
-# 5. Standard Model Fixtures
-# ----------------------------------------------------------------------
+# ======================================================================
+# 9. STANDARD MODEL FIXTURES
+# ======================================================================
 
 @pytest.fixture
 def base_user(make_user):
@@ -610,11 +671,6 @@ def teacher2(make_teacher):
 
 @pytest.fixture
 def second_teacher(teacher2):
-    """
-    Separate teacher used by timetable classroom-conflict tests.
-
-    This is intentionally different from the default `teacher` fixture.
-    """
     return teacher2
 
 
@@ -636,42 +692,45 @@ def parent(make_parent):
 @pytest.fixture
 def subject(app, school):
     with app.app_context():
-        subj = Subject(
+
+        subject = Subject(
             name="Mathematics",
             code="MATH101",
             school_id=school.id,
         )
 
-        _db.session.add(subj)
+        _db.session.add(subject)
         _db.session.commit()
 
-        _db.session.refresh(subj)
-        _db.session.expunge(subj)
+        _db.session.refresh(subject)
+        _db.session.expunge(subject)
 
-        return subj
+        return subject
 
 
 @pytest.fixture
 def classroom(app, school):
     with app.app_context():
-        cls = Classroom(
+
+        classroom = Classroom(
             name="Room A",
             capacity=30,
             school_id=school.id,
         )
 
-        _db.session.add(cls)
+        _db.session.add(classroom)
         _db.session.commit()
 
-        _db.session.refresh(cls)
-        _db.session.expunge(cls)
+        _db.session.refresh(classroom)
+        _db.session.expunge(classroom)
 
-        return cls
+        return classroom
 
 
 @pytest.fixture
 def academic_session(app, school):
     with app.app_context():
+
         session = AcademicSession(
             name="2026/2027",
             start_date=date(2026, 9, 1),
@@ -691,6 +750,7 @@ def academic_session(app, school):
 @pytest.fixture
 def term(app, academic_session, school):
     with app.app_context():
+
         term = Term(
             name="First Term",
             academic_session_id=academic_session.id,
@@ -720,7 +780,6 @@ def result(make_result):
 
 @pytest.fixture
 def timetable(make_timetable):
-    """Standard timetable fixture."""
     return make_timetable()
 
 
@@ -730,8 +789,12 @@ def attendance_record(make_attendance):
 
 
 @pytest.fixture
+def notification(make_notification, student):
+    return make_notification(student.user_id)
+
+
+@pytest.fixture
 def sample_absent_attendance(make_attendance, student, term):
-    """Fixture providing an attendance record with ABSENT status."""
     return make_attendance(
         student_obj=student,
         term_obj=term,
@@ -742,7 +805,6 @@ def sample_absent_attendance(make_attendance, student, term):
 
 @pytest.fixture
 def sample_present_attendance(make_attendance, student, term):
-    """Fixture providing an attendance record with PRESENT status."""
     return make_attendance(
         student_obj=student,
         term_obj=term,
@@ -759,79 +821,76 @@ def student_in_teacher_classroom(
     student,
 ):
     with app.app_context():
-        c = _db.session.merge(classroom)
-        s = _db.session.merge(student)
 
-        c.teacher_id = teacher.id
-        s.classroom_id = c.id
+        classroom_db = _db.session.merge(classroom)
+        student_db = _db.session.merge(student)
+
+        classroom_db.teacher_id = teacher.id
+        student_db.classroom_id = classroom_db.id
 
         _db.session.commit()
 
-        _db.session.refresh(s)
-        _db.session.expunge(s)
+        _db.session.refresh(student_db)
+        _db.session.expunge(student_db)
 
-        return s
+        return student_db
 
 
-# ----------------------------------------------------------------------
-# 6. Auth / Header Fixtures
-# ----------------------------------------------------------------------
+# ======================================================================
+# 10. JWT HELPERS
+# ======================================================================
 
-@pytest.fixture(scope="function")
-def admin_actor_id(app, admin_headers, school):
-    """
-    Returns the user ID of an admin for direct service testing requiring
-    actor_id.
-    """
+def _make_jwt_headers(app, user_id, role):
+    """Internal helper for generating JWT headers."""
+
     with app.app_context():
-        admin = User.query.filter_by(
-            role="admin",
-            school_id=school.id,
-        ).first()
 
-        if admin:
-            return admin.id
-
-        new_admin = User(
-            username="service_admin",
-            email="s_admin@example.com",
-            password="hashed-placeholder",
-            role="admin",
-            school_id=school.id,
+        token = create_access_token(
+            identity=str(user_id),
+            additional_claims={
+                "role": role,
+            },
         )
 
-        _db.session.add(new_admin)
-        _db.session.commit()
-
-        return new_admin.id
-
-
-@pytest.fixture(scope="function")
-def auth_headers(app):
-    """Dynamic factory for generating JWT authorization headers."""
-
-    from flask_jwt_extended import create_access_token
-
-    def _get_headers(user_id=1, role="admin"):
-        with app.app_context():
-            token = create_access_token(
-                identity=str(user_id),
-                additional_claims={
-                    "role": role,
-                },
-            )
-
-            return {
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/json",
-            }
-
-    return _get_headers
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+    }
 
 
-@pytest.fixture(scope="function")
+# ======================================================================
+# 11. PLATFORM ADMIN AUTH
+# ======================================================================
+
+@pytest.fixture
+def platform_admin_headers(app, make_user):
+    """
+    Creates a real platform administrator.
+
+    IMPORTANT:
+    Platform admins must have school_id=None because User.is_platform_admin
+    checks that condition.
+    """
+
+    user = make_user(
+        suffix="platform_admin",
+        role="platform_admin",
+        school_id=None,
+    )
+
+    return _make_jwt_headers(
+        app,
+        user.id,
+        "platform_admin",
+    )
+
+
+# ======================================================================
+# 12. NORMAL ADMIN AUTH
+# ======================================================================
+
+@pytest.fixture
 def admin_headers(app, db_session, school):
-    from flask_jwt_extended import create_access_token
 
     admin = User(
         username="admin_test",
@@ -844,105 +903,134 @@ def admin_headers(app, db_session, school):
     db_session.add(admin)
     db_session.commit()
 
-    token = create_access_token(
-        identity=str(admin.id),
-        additional_claims={
-            "role": "admin",
-        },
+    return _make_jwt_headers(
+        app,
+        admin.id,
+        "admin",
     )
 
-    return {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-    }
 
-
-@pytest.fixture(scope="function")
+@pytest.fixture
 def admin_auth_headers(admin_headers):
-    """Alias for admin_headers."""
+    """Alias retained for existing tests."""
     return admin_headers
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
+def admin_actor_id(app, admin_headers, school):
+    """
+    Returns the user ID of a tenant admin.
+    """
+
+    with app.app_context():
+
+        admin = User.query.filter_by(
+            role="admin",
+            school_id=school.id,
+        ).first()
+
+        if admin:
+            return admin.id
+
+        admin = User(
+            username="service_admin",
+            email="s_admin@example.com",
+            password="hashed-placeholder",
+            role="admin",
+            school_id=school.id,
+        )
+
+        _db.session.add(admin)
+        _db.session.commit()
+
+        return admin.id
+
+
+# ======================================================================
+# 13. GENERIC AUTH HEADER FACTORY
+# ======================================================================
+
+@pytest.fixture
+def auth_headers(app):
+    """
+    Dynamic JWT header factory.
+
+    Example:
+
+        headers = auth_headers(user.id, "student")
+    """
+
+    def _get_headers(user_id=1, role="admin"):
+        return _make_jwt_headers(
+            app,
+            user_id,
+            role,
+        )
+
+    return _get_headers
+
+
+# ======================================================================
+# 14. TEACHER AUTH
+# ======================================================================
+
+@pytest.fixture
 def teacher_headers(app, teacher):
-    from flask_jwt_extended import create_access_token
-
-    with app.app_context():
-        token = create_access_token(
-            identity=str(teacher.user_id),
-            additional_claims={
-                "role": "teacher",
-            },
-        )
-
-    return {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-    }
+    return _make_jwt_headers(
+        app,
+        teacher.user_id,
+        "teacher",
+    )
 
 
-@pytest.fixture(scope="function")
+# ======================================================================
+# 15. STUDENT AUTH
+# ======================================================================
+
+@pytest.fixture
 def student_headers(app, student):
-    from flask_jwt_extended import create_access_token
-
-    with app.app_context():
-        token = create_access_token(
-            identity=str(student.user_id),
-            additional_claims={
-                "role": "student",
-            },
-        )
-
-    return {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-    }
+    return _make_jwt_headers(
+        app,
+        student.user_id,
+        "student",
+    )
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 def student2_headers(app, student2):
-    from flask_jwt_extended import create_access_token
-
-    with app.app_context():
-        token = create_access_token(
-            identity=str(student2.user_id),
-            additional_claims={
-                "role": "student",
-            },
-        )
-
-    return {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-    }
+    return _make_jwt_headers(
+        app,
+        student2.user_id,
+        "student",
+    )
 
 
-@pytest.fixture(scope="function")
+# ======================================================================
+# 16. PARENT AUTH
+# ======================================================================
+
+@pytest.fixture
 def parent_headers(app, parent):
-    from flask_jwt_extended import create_access_token
-
-    with app.app_context():
-        token = create_access_token(
-            identity=str(parent.user_id),
-            additional_claims={
-                "role": "parent",
-            },
-        )
-
-    return {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-    }
+    return _make_jwt_headers(
+        app,
+        parent.user_id,
+        "parent",
+    )
 
 
-@pytest.fixture(scope="function")
+# ======================================================================
+# 17. PASSWORD TEST USER
+# ======================================================================
+
+@pytest.fixture
 def user_with_password(app, school):
-    from flask_jwt_extended import create_access_token
+
     from school_app.utils.password import hash_password
 
     plain_password = "OriginalPass123"
 
     with app.app_context():
+
         user = User(
             username="pwtest_user",
             email="pwtest_user@example.com",

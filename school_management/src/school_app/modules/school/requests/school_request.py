@@ -17,9 +17,14 @@ class SchoolBase(BaseModel):
     @field_validator("slug")
     @classmethod
     def slug_url_safe(cls, v: str) -> str:
-        v = v.lower()
-        if not SLUG_PATTERN.match(v):
-            raise ValueError("slug must be lowercase letters, numbers, and single hyphens only (e.g. 'green-valley-academy')")
+        v = v.lower().strip()
+
+        if not SLUG_PATTERN.fullmatch(v):
+            raise ValueError(
+                "slug must be lowercase letters, numbers, and single hyphens only "
+                "(e.g. 'green-valley-academy')"
+            )
+
         return v
 
 
