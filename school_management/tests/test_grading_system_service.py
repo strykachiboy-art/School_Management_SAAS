@@ -1,5 +1,3 @@
-from types import SimpleNamespace
-
 import pytest
 
 from school_app.modules.grading.services.grading_system_service import (
@@ -39,7 +37,11 @@ def test_create_grading_system_success(app, school, admin_actor_id):
         assert system.is_default is True
 
 
-def test_create_grading_system_replaces_default_for_same_school(app, school, admin_actor_id):
+def test_create_grading_system_replaces_default_for_same_school(
+    app,
+    school,
+    admin_actor_id,
+):
     with app.app_context():
         first = create_grading_system(
             Data(
@@ -66,7 +68,11 @@ def test_create_grading_system_replaces_default_for_same_school(app, school, adm
         assert get_default_grading_system(school.id).id == second.id
 
 
-def test_get_all_grading_systems_only_returns_active_by_default(app, school, admin_actor_id):
+def test_get_all_grading_systems_only_returns_active_by_default(
+    app,
+    school,
+    admin_actor_id,
+):
     with app.app_context():
         active = create_grading_system(
             Data(
@@ -78,6 +84,7 @@ def test_get_all_grading_systems_only_returns_active_by_default(app, school, adm
             ),
             admin_actor_id,
         )
+
         inactive = create_grading_system(
             Data(
                 name="Inactive System",
@@ -126,12 +133,16 @@ def test_update_grading_system_success(app, school, admin_actor_id):
 
         assert updated is not None
         assert updated.name == "After"
-        assert updated.strategy.value == "PERCENTAGE"
+        assert updated.strategy.value == "percentage"
         assert updated.is_default is True
         assert updated.is_active is False
 
 
-def test_delete_grading_system_rejects_default_system(app, school, admin_actor_id):
+def test_delete_grading_system_rejects_default_system(
+    app,
+    school,
+    admin_actor_id,
+):
     with app.app_context():
         system = create_grading_system(
             Data(
@@ -147,7 +158,11 @@ def test_delete_grading_system_rejects_default_system(app, school, admin_actor_i
             delete_grading_system(system.id, admin_actor_id)
 
 
-def test_delete_grading_system_removes_non_default_system(app, school, admin_actor_id):
+def test_delete_grading_system_removes_non_default_system(
+    app,
+    school,
+    admin_actor_id,
+):
     with app.app_context():
         system = create_grading_system(
             Data(
@@ -196,7 +211,11 @@ def test_create_grading_rule_success(app, school, admin_actor_id):
         assert rule.grade_name == "A"
 
 
-def test_create_grading_rule_rejects_missing_system(app, school, admin_actor_id):
+def test_create_grading_rule_rejects_missing_system(
+    app,
+    school,
+    admin_actor_id,
+):
     with app.app_context():
         with pytest.raises(Exception):
             create_grading_rule(
@@ -256,7 +275,11 @@ def test_update_grading_rule_success(app, school, admin_actor_id):
         assert updated.display_order == 1
 
 
-def test_delete_grading_rule_removes_rule(app, school, admin_actor_id):
+def test_delete_grading_rule_removes_rule(
+    app,
+    school,
+    admin_actor_id,
+):
     with app.app_context():
         system = create_grading_system(
             Data(
@@ -284,7 +307,11 @@ def test_delete_grading_rule_removes_rule(app, school, admin_actor_id):
         assert delete_grading_rule(rule.id, admin_actor_id) is True
 
 
-def test_resolve_grade_for_score_uses_school_default_system(app, school, admin_actor_id):
+def test_resolve_grade_for_score_uses_school_default_system(
+    app,
+    school,
+    admin_actor_id,
+):
     with app.app_context():
         system = create_grading_system(
             Data(
@@ -309,7 +336,10 @@ def test_resolve_grade_for_score_uses_school_default_system(app, school, admin_a
             admin_actor_id,
         )
 
-        grade_name, remark, ok = resolve_grade_for_score(82, school_id=school.id)
+        grade_name, remark, ok = resolve_grade_for_score(
+            82,
+            school_id=school.id,
+        )
 
         assert ok is True
         assert grade_name == "A"

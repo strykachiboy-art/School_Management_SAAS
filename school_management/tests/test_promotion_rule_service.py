@@ -41,13 +41,26 @@ def make_rule(**overrides):
     return SimpleNamespace(**values)
 
 
+# ======================================================================
+# CREATE
+# ======================================================================
+
+
 def test_create_rule_requires_school_context():
     with pytest.raises(BadRequest):
-        svc.create_promotion_rule(rule_data(), actor_id=7, school_id=None)
+        svc.create_promotion_rule(
+            rule_data(),
+            actor_id=7,
+            school_id=None,
+        )
 
 
-def test_create_rule_rejects_missing_from_level():
-    svc.db.session.get = MagicMock(return_value=None)
+def test_create_rule_rejects_missing_from_level(monkeypatch):
+    monkeypatch.setattr(
+        svc.db.session,
+        "get",
+        MagicMock(return_value=None),
+    )
 
     with pytest.raises(NotFound):
         svc.create_promotion_rule(
@@ -57,13 +70,18 @@ def test_create_rule_rejects_missing_from_level():
         )
 
 
-def test_create_rule_rejects_source_level_from_another_school():
+def test_create_rule_rejects_source_level_from_another_school(monkeypatch):
     level = SimpleNamespace(
         id=1,
         school_id=2,
         name="Level 1",
     )
-    svc.db.session.get = MagicMock(return_value=level)
+
+    monkeypatch.setattr(
+        svc.db.session,
+        "get",
+        MagicMock(return_value=level),
+    )
 
     with pytest.raises(Forbidden):
         svc.create_promotion_rule(
@@ -73,20 +91,23 @@ def test_create_rule_rejects_source_level_from_another_school():
         )
 
 
-def test_create_rule_rejects_target_level_from_another_school():
+def test_create_rule_rejects_target_level_from_another_school(monkeypatch):
     from_level = SimpleNamespace(
         id=1,
         school_id=1,
         name="Level 1",
     )
+
     to_level = SimpleNamespace(
         id=2,
         school_id=2,
         name="Level 2",
     )
 
-    svc.db.session.get = MagicMock(
-        side_effect=[from_level, to_level]
+    monkeypatch.setattr(
+        svc.db.session,
+        "get",
+        MagicMock(side_effect=[from_level, to_level]),
     )
 
     with pytest.raises(Forbidden):
@@ -97,12 +118,15 @@ def test_create_rule_rejects_target_level_from_another_school():
         )
 
 
-def test_create_active_rule_deactivates_existing_rule_for_same_school():
+def test_create_active_rule_deactivates_existing_rule_for_same_school(
+    monkeypatch,
+):
     from_level = SimpleNamespace(
         id=1,
         school_id=1,
         name="Level 1",
     )
+
     to_level = SimpleNamespace(
         id=2,
         school_id=1,
@@ -113,12 +137,19 @@ def test_create_active_rule_deactivates_existing_rule_for_same_school():
     new_rule.id = 20
     new_rule.name = "Promotion Rule"
 
-    svc.db.session.get = MagicMock(
-        side_effect=[from_level, to_level]
+    monkeypatch.setattr(
+        svc.db.session,
+        "get",
+        MagicMock(side_effect=[from_level, to_level]),
     )
-    svc.db.session.flush = MagicMock()
-    svc.db.session.add = MagicMock()
-    svc.db.session.commit = MagicMock()
+
+    mock_flush = MagicMock()
+    mock_add = MagicMock()
+    mock_commit = MagicMock()
+
+    monkeypatch.setattr(svc.db.session, "flush", mock_flush)
+    monkeypatch.setattr(svc.db.session, "add", mock_add)
+    monkeypatch.setattr(svc.db.session, "commit", mock_commit)
 
     with patch.object(
         svc,
@@ -142,19 +173,22 @@ def test_create_active_rule_deactivates_existing_rule_for_same_school():
 
     deactivate.assert_called_once_with(1, 1)
 
-    svc.db.session.add.assert_called_once_with(new_rule)
-    svc.db.session.flush.assert_called_once()
-    svc.db.session.commit.assert_called_once()
+    mock_add.assert_called_once_with(new_rule)
+    mock_flush.assert_called_once()
+    mock_commit.assert_called_once()
 
     audit.assert_called_once()
 
 
-def test_create_inactive_rule_does_not_deactivate_existing_rule():
+def test_create_inactive_rule_does_not_deactivate_existing_rule(
+    monkeypatch,
+):
     from_level = SimpleNamespace(
         id=1,
         school_id=1,
         name="Level 1",
     )
+
     to_level = SimpleNamespace(
         id=2,
         school_id=1,
@@ -165,12 +199,19 @@ def test_create_inactive_rule_does_not_deactivate_existing_rule():
     new_rule.id = 21
     new_rule.name = "Promotion Rule"
 
-    svc.db.session.get = MagicMock(
-        side_effect=[from_level, to_level]
+    monkeypatch.setattr(
+        svc.db.session,
+        "get",
+        MagicMock(side_effect=[from_level, to_level]),
     )
-    svc.db.session.flush = MagicMock()
-    svc.db.session.add = MagicMock()
-    svc.db.session.commit = MagicMock()
+
+    mock_flush = MagicMock()
+    mock_add = MagicMock()
+    mock_commit = MagicMock()
+
+    monkeypatch.setattr(svc.db.session, "flush", mock_flush)
+    monkeypatch.setattr(svc.db.session, "add", mock_add)
+    monkeypatch.setattr(svc.db.session, "commit", mock_commit)
 
     with patch.object(
         svc,
@@ -191,20 +232,30 @@ def test_create_inactive_rule_does_not_deactivate_existing_rule():
         )
 
     assert result is new_rule
+
     deactivate.assert_not_called()
 
-    svc.db.session.add.assert_called_once_with(new_rule)
-    svc.db.session.flush.assert_called_once()
-    svc.db.session.commit.assert_called_once()
+    mock_add.assert_called_once_with(new_rule)
+    mock_flush.assert_called_once()
+    mock_commit.assert_called_once()
 
 
-def test_get_all_rules_filters_by_school_and_level(db_session):
+# ======================================================================
+# READ
+# ======================================================================
+
+
+def test_get_all_rules_filters_by_school_and_level(monkeypatch, db_session):
     result = [make_rule()]
 
     scalars = MagicMock()
     scalars.all.return_value = result
 
-    db_session.scalars = MagicMock(return_value=scalars)
+    monkeypatch.setattr(
+        db_session,
+        "scalars",
+        MagicMock(return_value=scalars),
+    )
 
     rules = svc.get_all_promotion_rules(
         from_level_id=1,
@@ -216,11 +267,15 @@ def test_get_all_rules_filters_by_school_and_level(db_session):
     db_session.scalars.assert_called_once()
 
 
-def test_get_all_rules_can_include_inactive(db_session):
+def test_get_all_rules_can_include_inactive(monkeypatch, db_session):
     scalars = MagicMock()
     scalars.all.return_value = []
 
-    db_session.scalars = MagicMock(return_value=scalars)
+    monkeypatch.setattr(
+        db_session,
+        "scalars",
+        MagicMock(return_value=scalars),
+    )
 
     assert svc.get_all_promotion_rules(
         include_inactive=True,
@@ -228,13 +283,17 @@ def test_get_all_rules_can_include_inactive(db_session):
     ) == []
 
 
-def test_get_rule_is_school_scoped(db_session):
+def test_get_rule_is_school_scoped(monkeypatch, db_session):
     rule = make_rule()
 
     scalars = MagicMock()
     scalars.first.return_value = rule
 
-    db_session.scalars = MagicMock(return_value=scalars)
+    monkeypatch.setattr(
+        db_session,
+        "scalars",
+        MagicMock(return_value=scalars),
+    )
 
     assert svc.get_promotion_rule(
         10,
@@ -244,11 +303,15 @@ def test_get_rule_is_school_scoped(db_session):
     db_session.scalars.assert_called_once()
 
 
-def test_get_rule_returns_none_when_not_found(db_session):
+def test_get_rule_returns_none_when_not_found(monkeypatch, db_session):
     scalars = MagicMock()
     scalars.first.return_value = None
 
-    db_session.scalars = MagicMock(return_value=scalars)
+    monkeypatch.setattr(
+        db_session,
+        "scalars",
+        MagicMock(return_value=scalars),
+    )
 
     assert svc.get_promotion_rule(
         999,
@@ -256,13 +319,20 @@ def test_get_rule_returns_none_when_not_found(db_session):
     ) is None
 
 
-def test_get_active_rule_for_level_is_school_scoped(db_session):
+def test_get_active_rule_for_level_is_school_scoped(
+    monkeypatch,
+    db_session,
+):
     rule = make_rule()
 
     scalars = MagicMock()
     scalars.first.return_value = rule
 
-    db_session.scalars = MagicMock(return_value=scalars)
+    monkeypatch.setattr(
+        db_session,
+        "scalars",
+        MagicMock(return_value=scalars),
+    )
 
     assert svc.get_active_rule_for_level(
         1,
@@ -270,11 +340,23 @@ def test_get_active_rule_for_level_is_school_scoped(db_session):
     ) is rule
 
 
-def test_update_rule_returns_none_when_rule_not_found(db_session):
+# ======================================================================
+# UPDATE
+# ======================================================================
+
+
+def test_update_rule_returns_none_when_rule_not_found(
+    monkeypatch,
+    db_session,
+):
     scalars = MagicMock()
     scalars.first.return_value = None
 
-    db_session.scalars = MagicMock(return_value=scalars)
+    monkeypatch.setattr(
+        db_session,
+        "scalars",
+        MagicMock(return_value=scalars),
+    )
 
     assert svc.update_promotion_rule(
         rule_data(name="Updated"),
@@ -284,15 +366,34 @@ def test_update_rule_returns_none_when_rule_not_found(db_session):
     ) is None
 
 
-def test_update_rule_changes_fields_and_audits(db_session):
+def test_update_rule_changes_fields_and_audits(
+    monkeypatch,
+    db_session,
+):
     rule = make_rule()
 
     scalars = MagicMock()
     scalars.first.return_value = rule
 
-    db_session.scalars = MagicMock(return_value=scalars)
-    db_session.flush = MagicMock()
-    db_session.commit = MagicMock()
+    monkeypatch.setattr(
+        db_session,
+        "scalars",
+        MagicMock(return_value=scalars),
+    )
+
+    mock_flush = MagicMock()
+    mock_commit = MagicMock()
+
+    monkeypatch.setattr(
+        db_session,
+        "flush",
+        mock_flush,
+    )
+    monkeypatch.setattr(
+        db_session,
+        "commit",
+        mock_commit,
+    )
 
     data = rule_data(
         name="Updated Rule",
@@ -328,15 +429,32 @@ def test_update_rule_changes_fields_and_audits(db_session):
     audit.assert_called_once()
 
 
-def test_update_inactive_rule_to_active_deactivates_existing_rule(db_session):
+def test_update_inactive_rule_to_active_deactivates_existing_rule(
+    monkeypatch,
+    db_session,
+):
     rule = make_rule(is_active=False)
 
     scalars = MagicMock()
     scalars.first.return_value = rule
 
-    db_session.scalars = MagicMock(return_value=scalars)
-    db_session.flush = MagicMock()
-    db_session.commit = MagicMock()
+    monkeypatch.setattr(
+        db_session,
+        "scalars",
+        MagicMock(return_value=scalars),
+    )
+
+    monkeypatch.setattr(
+        db_session,
+        "flush",
+        MagicMock(),
+    )
+
+    monkeypatch.setattr(
+        db_session,
+        "commit",
+        MagicMock(),
+    )
 
     with patch.object(
         svc,
@@ -356,11 +474,23 @@ def test_update_inactive_rule_to_active_deactivates_existing_rule(db_session):
     deactivate.assert_called_once_with(1, 1)
 
 
-def test_delete_rule_returns_false_when_not_found(db_session):
+# ======================================================================
+# DELETE
+# ======================================================================
+
+
+def test_delete_rule_returns_false_when_not_found(
+    monkeypatch,
+    db_session,
+):
     scalars = MagicMock()
     scalars.first.return_value = None
 
-    db_session.scalars = MagicMock(return_value=scalars)
+    monkeypatch.setattr(
+        db_session,
+        "scalars",
+        MagicMock(return_value=scalars),
+    )
 
     assert svc.delete_promotion_rule(
         999,
@@ -369,15 +499,34 @@ def test_delete_rule_returns_false_when_not_found(db_session):
     ) is False
 
 
-def test_delete_rule_deletes_and_audits(db_session):
+def test_delete_rule_deletes_and_audits(
+    monkeypatch,
+    db_session,
+):
     rule = make_rule()
 
     scalars = MagicMock()
     scalars.first.return_value = rule
 
-    db_session.scalars = MagicMock(return_value=scalars)
-    db_session.delete = MagicMock()
-    db_session.commit = MagicMock()
+    monkeypatch.setattr(
+        db_session,
+        "scalars",
+        MagicMock(return_value=scalars),
+    )
+
+    mock_delete = MagicMock()
+    mock_commit = MagicMock()
+
+    monkeypatch.setattr(
+        db_session,
+        "delete",
+        mock_delete,
+    )
+    monkeypatch.setattr(
+        db_session,
+        "commit",
+        mock_commit,
+    )
 
     with patch.object(
         svc,
@@ -390,28 +539,48 @@ def test_delete_rule_deletes_and_audits(db_session):
             school_id=1,
         ) is True
 
-    db_session.delete.assert_called_once_with(rule)
-    db_session.commit.assert_called_once()
+    mock_delete.assert_called_once_with(rule)
+    mock_commit.assert_called_once()
+
     audit.assert_called_once()
 
 
-def test_deactivate_existing_active_rule_is_school_scoped(db_session):
-    db_session.execute = MagicMock()
+# ======================================================================
+# INTERNAL HELPERS
+# ======================================================================
+
+
+def test_deactivate_existing_active_rule_is_school_scoped(
+    monkeypatch,
+    db_session,
+):
+    mock_execute = MagicMock()
+
+    monkeypatch.setattr(
+        db_session,
+        "execute",
+        mock_execute,
+    )
 
     svc._deactivate_existing_active_rule(
         3,
         school_id=7,
     )
 
-    db_session.execute.assert_called_once()
+    mock_execute.assert_called_once()
 
-    statement = db_session.execute.call_args.args[0]
+    statement = mock_execute.call_args.args[0]
 
     assert "promotion_rule" in str(statement).lower()
     assert "school_id" in str(statement).lower()
 
 
-def test_create_rule_with_no_target_level_is_allowed():
+# ======================================================================
+# SPECIAL CREATE CASE
+# ======================================================================
+
+
+def test_create_rule_with_no_target_level_is_allowed(monkeypatch):
     from_level = SimpleNamespace(
         id=1,
         school_id=1,
@@ -423,10 +592,29 @@ def test_create_rule_with_no_target_level_is_allowed():
         name="Promotion Rule",
     )
 
-    svc.db.session.get = MagicMock(return_value=from_level)
-    svc.db.session.flush = MagicMock()
-    svc.db.session.add = MagicMock()
-    svc.db.session.commit = MagicMock()
+    monkeypatch.setattr(
+        svc.db.session,
+        "get",
+        MagicMock(return_value=from_level),
+    )
+
+    monkeypatch.setattr(
+        svc.db.session,
+        "flush",
+        MagicMock(),
+    )
+
+    monkeypatch.setattr(
+        svc.db.session,
+        "add",
+        MagicMock(),
+    )
+
+    monkeypatch.setattr(
+        svc.db.session,
+        "commit",
+        MagicMock(),
+    )
 
     with patch.object(
         svc,

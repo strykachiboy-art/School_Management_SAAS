@@ -26,7 +26,7 @@ class Classroom(db.Model):
         index=True,
     )
     name = db.Column(db.String(100), nullable=False)  # Uniqueness is scoped per school
-    capacity = db.Column(db.Integer, nullable=False)
+    capacity = db.Column(db.Integer, nullable=False, default=0)
     location = db.Column(db.String(100), nullable=True)
     teacher_id = db.Column(db.Integer, db.ForeignKey("teachers.id", ondelete="SET NULL"), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)

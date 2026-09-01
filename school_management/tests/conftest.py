@@ -1,10 +1,9 @@
 import uuid
-from datetime import date, datetime, time
+from datetime import date, time
 import secrets
-from sqlalchemy import Index, text
 
 import pytest
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import UniqueConstraint, text
 from flask_jwt_extended import create_access_token
 
 from school_app import create_app
@@ -40,10 +39,25 @@ from school_app.models.user import User
 
 @pytest.fixture(scope="function")
 def app():
+    """
+    Create an isolated Flask application and in-memory SQLite database
+    for every test.
+
+    StudentEnrollment has an intentional partial unique index:
+
+        UNIQUE(school_id, student_id, academic_session_id)
+        WHERE status = 'active'
+
+    This allows historical enrollment records while preventing two
+    simultaneous ACTIVE enrollments for the same student/session/school.
+    """
+
     test_config = {
         "TESTING": True,
         "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:",
-        "JWT_SECRET_KEY": "test-secret-key-that-is-at-least-32-bytes-long",
+        "JWT_SECRET_KEY": (
+            "test-secret-key-that-is-at-least-32-bytes-long"
+        ),
         "RATELIMIT_ENABLED": True,
         "RATELIMIT_STORAGE_URI": "memory://",
         "WTF_CSRF_ENABLED": False,
@@ -62,27 +76,52 @@ def app():
             "academic_session_id",
         }
 
-        # --------------------------------------------------------------
-        # Remove any legacy unconditional UNIQUE constraints/indexes
-        # from SQLAlchemy metadata before create_all().
-        # --------------------------------------------------------------
-
         removed_constraints = []
         removed_indexes = []
 
-        for constraint in list(enrollment_table.constraints):
-            if isinstance(constraint, UniqueConstraint):
-                constraint_columns = {
-                    column.name
-                    for column in constraint.columns
-                }
+        # --------------------------------------------------------------
+        # Remove legacy unconditional UNIQUE constraints.
+        #
+        # We only remove constraints covering exactly:
+        #
+        #   school_id
+        #   student_id
+        #   academic_session_id
+        #
+        # The current intended uniqueness rule is implemented by the
+        # partial index uq_active_student_enrollment.
+        # --------------------------------------------------------------
 
-                if constraint_columns == enrollment_columns:
-                    enrollment_table.constraints.remove(constraint)
-                    removed_constraints.append(constraint)
+        for constraint in list(enrollment_table.constraints):
+
+            if not isinstance(constraint, UniqueConstraint):
+                continue
+
+            constraint_columns = {
+                column.name
+                for column in constraint.columns
+            }
+
+            if constraint_columns == enrollment_columns:
+                enrollment_table.constraints.remove(constraint)
+                removed_constraints.append(constraint)
+
+        # --------------------------------------------------------------
+        # Remove legacy unconditional UNIQUE indexes.
+        #
+        # NEVER remove:
+        #
+        #   uq_active_student_enrollment
+        #
+        # because this is the intended partial unique index.
+        # --------------------------------------------------------------
 
         for index in list(enrollment_table.indexes):
+
             if not index.unique:
+                continue
+
+            if index.name == "uq_active_student_enrollment":
                 continue
 
             index_columns = {
@@ -90,78 +129,48 @@ def app():
                 for column in index.columns
             }
 
-            if index_columns != enrollment_columns:
-                continue
-
-            if index.name == "uq_active_student_enrollment":
-                continue
-
-            enrollment_table.indexes.remove(index)
-            removed_indexes.append(index)
+            if index_columns == enrollment_columns:
+                enrollment_table.indexes.remove(index)
+                removed_indexes.append(index)
 
         # --------------------------------------------------------------
-        # Create the test database.
+        # Create all test tables after the metadata cleanup.
         # --------------------------------------------------------------
 
         _db.create_all()
-
-        # --------------------------------------------------------------
-        # SQLite safety net:
-        #
-        # Remove any physical unconditional unique index that may have
-        # been created by another model/import.
-        #
-        # We keep only the intended partial unique index.
-        # --------------------------------------------------------------
-
-        if _db.engine.dialect.name == "sqlite":
-
-            rows = _db.session.execute(
-                text("PRAGMA index_list('student_enrollments')")
-            ).fetchall()
-
-            for row in rows:
-                index_name = row[1]
-                is_unique = row[2]
-
-                if not is_unique:
-                    continue
-
-                if index_name == "uq_active_student_enrollment":
-                    continue
-
-                index_info = _db.session.execute(
-                    text(
-                        f'PRAGMA index_info("{index_name}")'
-                    )
-                ).fetchall()
-
-                index_columns = {
-                    info[2]
-                    for info in index_info
-                }
-
-                if index_columns == enrollment_columns:
-                    _db.session.execute(
-                        text(
-                            f'DROP INDEX IF EXISTS "{index_name}"'
-                        )
-                    )
-
-            _db.session.commit()
 
         try:
             yield app
 
         finally:
+            # ----------------------------------------------------------
+            # Dispose of the current session first.
+            # ----------------------------------------------------------
+
             _db.session.remove()
+
+            # ----------------------------------------------------------
+            # Drop all test tables.
+            # ----------------------------------------------------------
+
             _db.drop_all()
 
+            # ----------------------------------------------------------
+            # Restore metadata exactly as it was before the fixture.
+            #
+            # This prevents test-specific metadata manipulation from
+            # leaking into subsequent tests.
+            # ----------------------------------------------------------
+
             for constraint in removed_constraints:
-                enrollment_table.append_constraint(constraint)
+
+                if constraint not in enrollment_table.constraints:
+                    enrollment_table.append_constraint(constraint)
 
             for index in removed_indexes:
-                enrollment_table.append_constraint(index)
+
+                if index not in enrollment_table.indexes:
+                    enrollment_table.append_constraint(index)
 
 
 @pytest.fixture(scope="function")
@@ -274,19 +283,34 @@ def json_client(client):
             return kwargs
 
         def post(self, url, **kwargs):
-            return self.c.post(url, **self._kwargs(kwargs))
+            return self.c.post(
+                url,
+                **self._kwargs(kwargs),
+            )
 
         def patch(self, url, **kwargs):
-            return self.c.patch(url, **self._kwargs(kwargs))
+            return self.c.patch(
+                url,
+                **self._kwargs(kwargs),
+            )
 
         def put(self, url, **kwargs):
-            return self.c.put(url, **self._kwargs(kwargs))
+            return self.c.put(
+                url,
+                **self._kwargs(kwargs),
+            )
 
         def get(self, url, **kwargs):
-            return self.c.get(url, **self._kwargs(kwargs))
+            return self.c.get(
+                url,
+                **self._kwargs(kwargs),
+            )
 
         def delete(self, url, **kwargs):
-            return self.c.delete(url, **self._kwargs(kwargs))
+            return self.c.delete(
+                url,
+                **self._kwargs(kwargs),
+            )
 
     return JSONClient(client)
 
@@ -311,19 +335,34 @@ def admin_client(client, admin_headers):
             return kwargs
 
         def post(self, url, **kwargs):
-            return self.c.post(url, **self._kwargs(kwargs))
+            return self.c.post(
+                url,
+                **self._kwargs(kwargs),
+            )
 
         def patch(self, url, **kwargs):
-            return self.c.patch(url, **self._kwargs(kwargs))
+            return self.c.patch(
+                url,
+                **self._kwargs(kwargs),
+            )
 
         def put(self, url, **kwargs):
-            return self.c.put(url, **self._kwargs(kwargs))
+            return self.c.put(
+                url,
+                **self._kwargs(kwargs),
+            )
 
         def get(self, url, **kwargs):
-            return self.c.get(url, **self._kwargs(kwargs))
+            return self.c.get(
+                url,
+                **self._kwargs(kwargs),
+            )
 
         def delete(self, url, **kwargs):
-            return self.c.delete(url, **self._kwargs(kwargs))
+            return self.c.delete(
+                url,
+                **self._kwargs(kwargs),
+            )
 
     return AdminClient(client)
 
@@ -367,6 +406,7 @@ def make_user(app, school):
         role="student",
         school_id=_UNSET,
     ):
+
         with app.app_context():
 
             if role == "platform_admin":
@@ -605,7 +645,11 @@ def make_exam(
                 subject_id=subject_obj.id,
                 classroom_id=classroom_obj.id,
                 session_id=session_obj.id,
-                term_id=term_obj.id if term_obj else None,
+                term_id=(
+                    term_obj.id
+                    if term_obj
+                    else None
+                ),
                 exam_date=exam_date_val,
                 start_time=start_time_val,
                 duration_minutes=duration_minutes,
@@ -684,7 +728,11 @@ def make_timetable(
             teacher_obj = teacher_obj or teacher
 
             timetable = Timetable(
-                school_id=school.id if school_id is None else school_id,
+                school_id=(
+                    school.id
+                    if school_id is None
+                    else school_id
+                ),
                 term_id=term_obj.id,
                 classroom_id=classroom_obj.id,
                 subject_id=subject_obj.id,
@@ -783,17 +831,33 @@ def make_enrollment(
                 withdrawal_date = withdrawal_date_val
 
             # ----------------------------------------------------------
-            # Important:
+            # IMPORTANT:
             #
-            # Do NOT automatically set withdrawal_date for historical
-            # statuses here.
+            # Do not infer withdrawal_date from status.
             #
-            # Tests should explicitly provide withdrawal_date when
-            # testing withdrawn records.
+            # The current database uniqueness rule is based on:
+            #
+            #     status = 'active'
+            #
+            # rather than withdrawal_date IS NULL.
+            #
+            # Therefore historical statuses such as:
+            #
+            #     TRANSFERRED
+            #     PROMOTED
+            #     REPEATED
+            #     WITHDRAWN
+            #     GRADUATED
+            #
+            # naturally fall outside the active unique index.
             # ----------------------------------------------------------
 
             enrollment = StudentEnrollment(
-                school_id=school.id if school_id is None else school_id,
+                school_id=(
+                    school.id
+                    if school_id is None
+                    else school_id
+                ),
                 student_id=student_obj.id,
                 classroom_id=(
                     classroom_obj.id
@@ -850,7 +914,11 @@ def make_report_card(
             term_obj = term_obj or term
 
             report = ReportCard(
-                school_id=school.id if school_id is None else school_id,
+                school_id=(
+                    school.id
+                    if school_id is None
+                    else school_id
+                ),
                 student_id=student_obj.id,
                 academic_session_id=session_obj.id,
                 term_id=term_obj.id,
@@ -876,6 +944,10 @@ def make_report_card(
             return report
 
     return _make
+
+@pytest.fixture
+def report_card(make_report_card):
+    return make_report_card()
 
 
 @pytest.fixture
@@ -1066,7 +1138,11 @@ def notification(make_notification, student):
 
 
 @pytest.fixture
-def sample_absent_attendance(make_attendance, student, term):
+def sample_absent_attendance(
+    make_attendance,
+    student,
+    term,
+):
 
     return make_attendance(
         student_obj=student,
@@ -1077,7 +1153,11 @@ def sample_absent_attendance(make_attendance, student, term):
 
 
 @pytest.fixture
-def sample_present_attendance(make_attendance, student, term):
+def sample_present_attendance(
+    make_attendance,
+    student,
+    term,
+):
 
     return make_attendance(
         student_obj=student,
@@ -1216,7 +1296,10 @@ def admin_actor_id(app, admin_headers, school):
 @pytest.fixture
 def auth_headers(app):
 
-    def _get_headers(user_id=1, role="admin"):
+    def _get_headers(
+        user_id=1,
+        role="admin",
+    ):
 
         return _make_jwt_headers(
             app,
