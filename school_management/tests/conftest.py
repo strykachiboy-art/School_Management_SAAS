@@ -265,19 +265,29 @@ def notification(make_notification, student):
 @pytest.fixture
 def make_user(app, school):
     """
-    Factory for creating users belonging to the test school.
+    Factory for creating users.
 
-    Every user is tenant-aware by default.
+    By default, users belong to the test school.
+    Pass school_id explicitly to override the school, including None.
     """
+    _DEFAULT = object()
 
-    def _make(suffix="1", role="student"):
+    def _make(
+        suffix="1",
+        role="student",
+        school_id=_DEFAULT,
+    ):
         with app.app_context():
             user = User(
                 username=f"user_{suffix}",
                 email=f"user_{suffix}@example.com",
                 password="hashed-placeholder",
                 role=role,
-                school_id=school.id,
+                school_id=(
+                    school.id
+                    if school_id is _DEFAULT
+                    else school_id
+                ),
             )
 
             _db.session.add(user)
@@ -289,6 +299,7 @@ def make_user(app, school):
             return user
 
     return _make
+
 
 
 @pytest.fixture

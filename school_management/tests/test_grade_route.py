@@ -80,7 +80,7 @@ def test_get_student_grade_success(
     assert data["grade"]["total"] == 140
     assert data["grade"]["average"] == pytest.approx(70.0)
     assert data["grade"]["grade"] == "A"
-    assert data["grade"]["remark"] == "Excelent"
+    assert data["grade"]["remark"] == "Excellent"
 
 
 def test_get_student_grade_no_results_404(

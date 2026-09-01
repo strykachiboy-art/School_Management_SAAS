@@ -9,9 +9,9 @@ from school_app.modules.grading.services.grade_service import (
 )
 
 
-# ----------------------------------------------------------------------
+# ======================================================================
 # Fake objects
-# ----------------------------------------------------------------------
+# ======================================================================
 
 class FakeExam:
     def __init__(
@@ -121,19 +121,14 @@ def test_calculate_overall_average_with_decimal_marks():
         (100, "A"),
         (90, "A"),
         (70, "A"),
-
         (69.9, "B"),
         (60, "B"),
-
         (59.9, "C"),
         (50, "C"),
-
         (49.9, "D"),
         (45, "D"),
-
         (44.9, "E"),
         (40, "E"),
-
         (39.9, "F"),
         (0, "F"),
         (-5, "F"),
@@ -195,10 +190,13 @@ def test_calculate_student_grade_full_shape():
 
     result = calculate_student_grade(results)
 
+    assert result["total"] == 240
     assert result["average"] == pytest.approx(80.0)
     assert result["grade"] == "A"
     assert result["remark"] == "Excellent"
+
     assert set(result.keys()) == {
+        "total",
         "average",
         "grade",
         "remark",
@@ -207,15 +205,17 @@ def test_calculate_student_grade_full_shape():
 
 def test_calculate_student_grade_empty_results():
     """
-    No results -> average 0 -> grade F -> Fail.
+    No results -> total 0 -> average 0 -> grade F -> Fail.
     """
-
     result = calculate_student_grade([])
 
+    assert result["total"] == 0
     assert result["average"] == 0.0
     assert result["grade"] == "F"
     assert result["remark"] == "Fail"
+
     assert set(result.keys()) == {
+        "total",
         "average",
         "grade",
         "remark",
@@ -230,6 +230,7 @@ def test_calculate_student_grade_average_boundary():
 
     result = calculate_student_grade(results)
 
+    assert result["total"] == 140
     assert result["average"] == pytest.approx(70.0)
     assert result["grade"] == "A"
     assert result["remark"] == "Excellent"
@@ -243,6 +244,7 @@ def test_calculate_student_grade_below_a_boundary():
 
     result = calculate_student_grade(results)
 
+    assert result["total"] == 139
     assert result["average"] == pytest.approx(69.5)
     assert result["grade"] == "B"
     assert result["remark"] == "Very Good"

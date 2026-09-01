@@ -387,17 +387,19 @@ def test_delete_academic_stage_with_levels_is_rejected(app, admin_stage, admin_a
 
         try:
             level = level_model(
-                name="Test Level",
-                academic_stage_id=stage.id,
-                school_id=stage.school_id,
-            )
-
+               name="Test Level",
+               stage_id=stage.id,
+               school_id=stage.school_id,
+           )
             db.session.add(level)
             db.session.commit()
 
-        except Exception:
+        except Exception as exc:
             db.session.rollback()
-            pytest.skip("Level model requires additional fields.")
+            pytest.fail(
+                 f"Could not create AcademicLevel for delete test: {exc}"
+           )
+
 
         with pytest.raises(BadRequest) as exc:
             delete_academic_stage(stage.id, admin_actor_id)
