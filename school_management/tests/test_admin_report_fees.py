@@ -1,214 +1,263 @@
-from decimal import Decimal
-from collections import defaultdict
-from sqlalchemy import select, func
+# tests/test_admin_report_fees_detailed.py
 
-from school_app.extensions import db
-from school_app.models.school_fees import Invoice, Payment
-from school_app.models.student import Student
-from school_app.models.classroom import Classroom
+from datetime import date
+from decimal import Decimal
+
 from school_app.models.academic_session import AcademicSession
 from school_app.models.term import Term
-from school_app.enums.school_fees import PaymentStatus
+from school_app.models.classroom import Classroom
+from school_app.models.school_fees import Invoice, Payment
+from school_app.enums.school_fees import (
+    PaymentStatus,
+    PaymentMethod,
+    PaymentGateway,
+)
+
+from school_app.modules.admin_reports.services.admin_report_fees_service import (
+    get_admin_report_fees,
+)
 
 
-def _filtered_invoices_query(session_id=None, term_id=None, classroom_id=None,
-                              student_id=None, start_date=None, end_date=None):
-    query = select(Invoice)
-    needs_student_join = classroom_id is not None
-    if needs_student_join:
-        query = query.join(Student, Invoice.student_id == Student.id)
+def test_get_admin_report_fees_comprehensive(app, db_session, school, make_student):
+    """
+    Test the admin fee report across:
 
-    if session_id is not None:
-        query = query.where(Invoice.session_id == session_id)
-    if term_id is not None:
-        query = query.where(Invoice.term_id == term_id)
-    if classroom_id is not None:
-        query = query.where(Student.classroom_id == classroom_id)
-    if student_id is not None:
-        query = query.where(Invoice.student_id == student_id)
-    if start_date is not None:
-        query = query.where(Invoice.created_at >= start_date)
-    if end_date is not None:
-        query = query.where(Invoice.created_at <= end_date)
-    return query
+    - expected invoice totals
+    - confirmed payments
+    - outstanding balances
+    - fully paid students
+    - partially paid students
+    - unpaid students
+    - pending gateway payments
+    - failed gateway payments
+    - payment-method breakdown
+    - classroom collection breakdown
+    - session collection breakdown
+    - term collection breakdown
+    """
+    with app.app_context():
+        # ------------------------------------------------------------
+        # 1. Use the existing school fixture (do not create another School)
+        # ------------------------------------------------------------
 
-
-def get_admin_report_fees(session_id=None, term_id=None, classroom_id=None,
-                           student_id=None, start_date=None, end_date=None):
-    invoices = db.session.execute(
-        _filtered_invoices_query(session_id, term_id, classroom_id, student_id, start_date, end_date)
-    ).scalars().all()
-
-    if not invoices:
-        return {
-            "total_expected": 0.0,
-            "total_paid": 0.0,
-            "total_outstanding": 0.0,
-            "payment_count": 0,
-            "fully_paid_students": 0,
-            "partially_paid_students": 0,
-            "unpaid_students": 0,
-            "collection_rate": None,
-            "collection_by_payment_method": {},
-            "pending_gateway_payments": {"count": 0, "total_amount": 0.0},
-            "failed_gateway_payments": {"count": 0, "total_amount": 0.0},
-            "collection_by_classroom": [],
-            "collection_by_session": [],
-            "collection_by_term": [],
-        }
-
-    total_expected = sum((inv.final_amount for inv in invoices), Decimal("0.00"))
-    total_paid = sum((inv.amount_paid for inv in invoices), Decimal("0.00"))
-    total_outstanding = sum((inv.balance for inv in invoices), Decimal("0.00"))
-
-    invoice_ids = [inv.id for inv in invoices]
-    payment_count = db.session.scalar(
-        select(func.count()).select_from(Payment)
-        .where(Payment.invoice_id.in_(invoice_ids), Payment.status == PaymentStatus.CONFIRMED)
-    )
-
-    payment_method_rows = db.session.execute(
-        select(Payment.payment_method, func.coalesce(func.sum(Payment.amount), Decimal("0.00")))
-        .where(Payment.invoice_id.in_(invoice_ids), Payment.status == PaymentStatus.CONFIRMED)
-        .group_by(Payment.payment_method)
-    ).all()
-    collection_by_payment_method = {method.value: float(total) for method, total in payment_method_rows}
-
-    # ---- Gateway payments stuck outside CONFIRMED ----
-    # Confirmed money already flows through amount_paid above; this
-    # surfaces checkouts that were started but never landed, so an
-    # admin isn't blind to money that's pending or failed at the gateway.
-    pending_gateway_row = db.session.execute(
-        select(func.count(), func.coalesce(func.sum(Payment.amount), Decimal("0.00")))
-        .where(
-            Payment.invoice_id.in_(invoice_ids),
-            Payment.status == PaymentStatus.PENDING,
-            Payment.gateway.is_not(None),
+        # ------------------------------------------------------------
+        # 2. Academic session
+        # ------------------------------------------------------------
+        academic_session = AcademicSession(
+            school_id=school.id,
+            name="2025/2026",
+            start_date=date(2025, 9, 1),
+            end_date=date(2026, 7, 31),
         )
-    ).one()
-    failed_gateway_row = db.session.execute(
-        select(func.count(), func.coalesce(func.sum(Payment.amount), Decimal("0.00")))
-        .where(
-            Payment.invoice_id.in_(invoice_ids),
-            Payment.status == PaymentStatus.FAILED,
-            Payment.gateway.is_not(None),
+        db_session.add(academic_session)
+        db_session.flush()
+
+        # ------------------------------------------------------------
+        # 3. Term
+        # ------------------------------------------------------------
+        term = Term(
+            school_id=school.id,
+            academic_session_id=academic_session.id,
+            name="First Term",
+            start_date=date(2025, 9, 1),
+            end_date=date(2025, 12, 15),
         )
-    ).one()
-    pending_gateway_payments = {"count": pending_gateway_row[0], "total_amount": float(pending_gateway_row[1])}
-    failed_gateway_payments = {"count": failed_gateway_row[0], "total_amount": float(failed_gateway_row[1])}
+        db_session.add(term)
+        db_session.flush()
 
-    # ---- Collection by classroom / session / term ----
-    # These break the *matched* invoice set down by dimension, so if
-    # you've already filtered to one classroom, "by_classroom" will
-    # trivially show one row — the value is in calling this with a
-    # broader filter (e.g. just session_id) and seeing collection
-    # split across every classroom in that session at once, rather
-    # than having to call the endpoint once per classroom.
-    student_ids = {inv.student_id for inv in invoices}
-    student_classroom = {
-        s.id: s.classroom_id for s in db.session.execute(
-            select(Student).where(Student.id.in_(student_ids))
-        ).scalars().all()
-    } if student_ids else {}
+        # ------------------------------------------------------------
+        # 4. Classroom
+        # ------------------------------------------------------------
+        classroom = Classroom(
+            school_id=school.id,
+            name="Grade 10",
+            capacity=30,
+        )
+        db_session.add(classroom)
+        db_session.flush()
 
-    classroom_ids_present = {cid for cid in student_classroom.values() if cid is not None}
-    classroom_names = {
-        c.id: c.name for c in db.session.execute(
-            select(Classroom).where(Classroom.id.in_(classroom_ids_present))
-        ).scalars().all()
-    } if classroom_ids_present else {}
+        # ------------------------------------------------------------
+        # 5. Students
+        # ------------------------------------------------------------
+        # Use the project fixture because Student.user_id is NOT NULL.
+        student1 = make_student("fees_alice")
+        student2 = make_student("fees_bob")
+        student3 = make_student("fees_charlie")
 
-    session_ids_present = {inv.session_id for inv in invoices}
-    session_names = {
-        s.id: s.name for s in db.session.execute(
-            select(AcademicSession).where(AcademicSession.id.in_(session_ids_present))
-        ).scalars().all()
-    } if session_ids_present else {}
+        # Merge into session and attach to classroom
+        student1 = db_session.merge(student1)
+        student2 = db_session.merge(student2)
+        student3 = db_session.merge(student3)
 
-    term_ids_present = {inv.term_id for inv in invoices}
-    term_names = {
-        t.id: t.name for t in db.session.execute(
-            select(Term).where(Term.id.in_(term_ids_present))
-        ).scalars().all()
-    } if term_ids_present else {}
+        student1.classroom_id = classroom.id
+        student2.classroom_id = classroom.id
+        student3.classroom_id = classroom.id
 
-    by_classroom_totals = defaultdict(lambda: {"expected": Decimal("0.00"), "paid": Decimal("0.00")})
-    by_session_totals = defaultdict(lambda: {"expected": Decimal("0.00"), "paid": Decimal("0.00")})
-    by_term_totals = defaultdict(lambda: {"expected": Decimal("0.00"), "paid": Decimal("0.00")})
+        db_session.flush()
 
-    for inv in invoices:
-        cid = student_classroom.get(inv.student_id)
-        by_classroom_totals[cid]["expected"] += inv.final_amount
-        by_classroom_totals[cid]["paid"] += inv.amount_paid
-        by_session_totals[inv.session_id]["expected"] += inv.final_amount
-        by_session_totals[inv.session_id]["paid"] += inv.amount_paid
-        by_term_totals[inv.term_id]["expected"] += inv.final_amount
-        by_term_totals[inv.term_id]["paid"] += inv.amount_paid
+        # ------------------------------------------------------------
+        # 6. Invoices
+        # ------------------------------------------------------------
+        inv1 = Invoice(
+            school_id=school.id,
+            student_id=student1.id,
+            session_id=academic_session.id,
+            term_id=term.id,
+            total_amount=Decimal("100.00"),
+        )
 
-    collection_by_classroom = sorted([
-        {
-            "classroom_id": cid,
-            "classroom_name": classroom_names.get(cid, "Unknown") if cid else "Unassigned",
-            "total_expected": float(totals["expected"]),
-            "total_paid": float(totals["paid"]),
-        }
-        for cid, totals in by_classroom_totals.items()
-    ], key=lambda c: c["classroom_name"])
+        inv2 = Invoice(
+            school_id=school.id,
+            student_id=student2.id,
+            session_id=academic_session.id,
+            term_id=term.id,
+            total_amount=Decimal("200.00"),
+        )
 
-    collection_by_session = sorted([
-        {
-            "session_id": sid,
-            "session_name": session_names.get(sid, "Unknown"),
-            "total_expected": float(totals["expected"]),
-            "total_paid": float(totals["paid"]),
-        }
-        for sid, totals in by_session_totals.items()
-    ], key=lambda s: s["session_name"])
+        inv3 = Invoice(
+            school_id=school.id,
+            student_id=student3.id,
+            session_id=academic_session.id,
+            term_id=term.id,
+            total_amount=Decimal("150.00"),
+        )
 
-    collection_by_term = sorted([
-        {
-            "term_id": tid,
-            "term_name": term_names.get(tid, "Unknown"),
-            "total_expected": float(totals["expected"]),
-            "total_paid": float(totals["paid"]),
-        }
-        for tid, totals in by_term_totals.items()
-    ], key=lambda t: t["term_name"])
+        db_session.add_all([inv1, inv2, inv3])
+        db_session.flush()
 
-    # ---- Per-student aggregation for fully/partially/unpaid buckets ----
-    by_student = defaultdict(list)
-    for inv in invoices:
-        by_student[inv.student_id].append(inv)
+        # ------------------------------------------------------------
+        # 7. Payments
+        # ------------------------------------------------------------
+        # Alice: fully paid (confirmed)
+        payment_confirmed = Payment(
+            school_id=school.id,
+            invoice_id=inv1.id,
+            student_id=student1.id,
+            amount=Decimal("100.00"),
+            status=PaymentStatus.CONFIRMED,
+            payment_method=PaymentMethod.CASH,
+            reference="PAY-001",
+        )
 
-    fully_paid = partially_paid = unpaid = 0
-    for student_id_key, student_invoices in by_student.items():
-        owed = sum((inv.final_amount - inv.waived_amount for inv in student_invoices), Decimal("0.00"))
-        paid = sum((inv.amount_paid for inv in student_invoices), Decimal("0.00"))
-        if owed <= 0 or paid >= owed:
-            fully_paid += 1
-        elif paid > 0:
-            partially_paid += 1
-        else:
-            unpaid += 1
+        # Bob: partially paid (confirmed)
+        payment_part = Payment(
+            school_id=school.id,
+            invoice_id=inv2.id,
+            student_id=student2.id,
+            amount=Decimal("50.00"),
+            status=PaymentStatus.CONFIRMED,
+            payment_method=PaymentMethod.BANK_TRANSFER,
+            reference="PAY-002",
+        )
 
-    collection_rate = (
-        round(float(total_paid) / float(total_expected) * 100, 1)
-        if total_expected else None
-    )
+        # Bob: pending gateway payment (should not count as confirmed)
+        payment_pending = Payment(
+            school_id=school.id,
+            invoice_id=inv2.id,
+            student_id=student2.id,
+            amount=Decimal("75.00"),
+            status=PaymentStatus.PENDING,
+            payment_method=PaymentMethod.BANK_TRANSFER,
+            gateway=PaymentGateway.STRIPE,
+            reference="PAY-003",
+        )
 
-    return {
-        "total_expected": float(total_expected),
-        "total_paid": float(total_paid),
-        "total_outstanding": float(total_outstanding),
-        "payment_count": payment_count,
-        "fully_paid_students": fully_paid,
-        "partially_paid_students": partially_paid,
-        "unpaid_students": unpaid,
-        "collection_rate": collection_rate,
-        "collection_by_payment_method": collection_by_payment_method,
-        "pending_gateway_payments": pending_gateway_payments,
-        "failed_gateway_payments": failed_gateway_payments,
-        "collection_by_classroom": collection_by_classroom,
-        "collection_by_session": collection_by_session,
-        "collection_by_term": collection_by_term,
-    }
+        # Charlie: failed gateway payment (still unpaid)
+        payment_failed = Payment(
+            school_id=school.id,
+            invoice_id=inv3.id,
+            student_id=student3.id,
+            amount=Decimal("150.00"),
+            status=PaymentStatus.FAILED,
+            payment_method=PaymentMethod.BANK_TRANSFER,
+            gateway=PaymentGateway.PAYSTACK,
+            reference="PAY-004",
+        )
+
+        db_session.add_all(
+            [payment_confirmed, payment_part, payment_pending, payment_failed]
+        )
+        db_session.commit()
+
+        # ------------------------------------------------------------
+        # 8. Generate report
+        # ------------------------------------------------------------
+        report = get_admin_report_fees(session_id=academic_session.id, term_id=term.id)
+
+        # ------------------------------------------------------------
+        # 9. Overall financial totals
+        # ------------------------------------------------------------
+        # 100 + 200 + 150 = 450
+        assert report["total_expected"] == 450.0
+
+        # Only confirmed payments: 100 + 50 = 150
+        assert report["total_paid"] == 150.0
+
+        # Outstanding: 450 - 150 = 300
+        assert report["total_outstanding"] == 300.0
+
+        # Only confirmed payment rows
+        assert report["payment_count"] == 2
+
+        # ------------------------------------------------------------
+        # 10. Student status
+        # ------------------------------------------------------------
+        assert report["fully_paid_students"] == 1
+        assert report["partially_paid_students"] == 1
+        assert report["unpaid_students"] == 1
+
+        # ------------------------------------------------------------
+        # 11. Collection rate
+        # ------------------------------------------------------------
+        # 150 / 450 * 100 = 33.3%
+        assert report["collection_rate"] == 33.3
+
+        # ------------------------------------------------------------
+        # 12. Payment-method breakdown
+        # ------------------------------------------------------------
+        # Keys are normalized to strings in the service; check both lowercase and enum value possibilities
+        # Prefer the normalized string keys produced by the service.
+        assert report["collection_by_payment_method"].get("CASH", report["collection_by_payment_method"].get("cash")) == 100.0
+        assert report["collection_by_payment_method"].get("BANK_TRANSFER", report["collection_by_payment_method"].get("bank_transfer")) == 50.0
+
+        # ------------------------------------------------------------
+        # 13. Pending gateway payments
+        # ------------------------------------------------------------
+        assert report["pending_gateway_payments"]["count"] == 1
+        assert report["pending_gateway_payments"]["total_amount"] == 75.0
+
+        # ------------------------------------------------------------
+        # 14. Failed gateway payments
+        # ------------------------------------------------------------
+        assert report["failed_gateway_payments"]["count"] == 1
+        assert report["failed_gateway_payments"]["total_amount"] == 150.0
+
+        # ------------------------------------------------------------
+        # 15. Classroom breakdown
+        # ------------------------------------------------------------
+        assert len(report["collection_by_classroom"]) == 1
+        classroom_report = report["collection_by_classroom"][0]
+        assert classroom_report["classroom_id"] == classroom.id
+        assert classroom_report["classroom_name"] == "Grade 10"
+        assert classroom_report["total_expected"] == 450.0
+        assert classroom_report["total_paid"] == 150.0
+
+        # ------------------------------------------------------------
+        # 16. Session breakdown
+        # ------------------------------------------------------------
+        assert len(report["collection_by_session"]) == 1
+        session_report = report["collection_by_session"][0]
+        assert session_report["session_id"] == academic_session.id
+        assert session_report["session_name"] == "2025/2026"
+        assert session_report["total_expected"] == 450.0
+        assert session_report["total_paid"] == 150.0
+
+        # ------------------------------------------------------------
+        # 17. Term breakdown
+        # ------------------------------------------------------------
+        assert len(report["collection_by_term"]) == 1
+        term_report = report["collection_by_term"][0]
+        assert term_report["term_id"] == term.id
+        assert term_report["term_name"] == "First Term"
+        assert term_report["total_expected"] == 450.0
+        assert term_report["total_paid"] == 150.0

@@ -56,7 +56,7 @@ def create_app(config: Optional[dict] = None) -> Flask:
     from school_app.modules.people.routes.teacher_permission_route import teacher_permission_bp
     from school_app.modules.notifications.routes.notification_route import notification_bp
     from school_app.modules.audit.routes.audit_route import audit_bp
-    from school_app.modules.admin_reports.routes.reports_route import reports_bp
+    from school_app.modules.admin_reports.routes.admin_reports_route import reports_bp
     from school_app.modules.school_fees.routes.school_fees_route import school_fees_bp
     from school_app.modules.grading.routes.report_card_route import report_card_bp
     
