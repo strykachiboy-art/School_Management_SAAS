@@ -1,6 +1,7 @@
 from datetime import date, datetime
 from typing import Optional
-from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator
+
+from pydantic import BaseModel, EmailStr, ConfigDict, field_validator
 
 
 class TeacherBase(BaseModel):
@@ -14,8 +15,10 @@ class TeacherBase(BaseModel):
     @classmethod
     def full_name_not_blank(cls, v: str) -> str:
         v = v.strip()
+
         if not v:
             raise ValueError("full_name cannot be blank")
+
         return v
 
     @field_validator("phone")
@@ -23,9 +26,12 @@ class TeacherBase(BaseModel):
     def phone_digits_only(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
             return v
+
         v = v.strip()
+
         if not v.isdigit():
             raise ValueError("phone must contain digits only")
+
         return v
 
     @field_validator("gender")
@@ -33,10 +39,21 @@ class TeacherBase(BaseModel):
     def gender_valid_choice(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
             return v
-        allowed = {"male", "female", "non-binary", "prefer not to say"}
+
+        allowed = {
+            "male",
+            "female",
+            "non-binary",
+            "prefer not to say",
+        }
+
         normalized = v.strip().lower()
+
         if normalized not in allowed:
-            raise ValueError(f"gender must be one of {sorted(allowed)}")
+            raise ValueError(
+                f"gender must be one of {sorted(allowed)}"
+            )
+
         return normalized
 
     @field_validator("date_of_birth")
@@ -44,8 +61,12 @@ class TeacherBase(BaseModel):
     def dob_not_in_future(cls, v: Optional[date]) -> Optional[date]:
         if v is None:
             return v
+
         if v > date.today():
-            raise ValueError("date_of_birth cannot be in the future")
+            raise ValueError(
+                "date_of_birth cannot be in the future"
+            )
+
         return v
 
 
@@ -57,18 +78,32 @@ class TeacherCreateRequest(TeacherBase):
     @classmethod
     def username_valid(cls, v: str) -> str:
         v = v.strip()
+
         if len(v) < 3:
-            raise ValueError("username must be at least 3 characters")
+            raise ValueError(
+                "username must be at least 3 characters"
+            )
+
         if not v.replace("_", "").isalnum():
-            raise ValueError("username may only contain letters, numbers, and underscores")
+            raise ValueError(
+                "username may only contain letters, numbers, and underscores"
+            )
+
         return v
 
     @field_validator("password")
     @classmethod
     def password_strong_enough(cls, v: str) -> str:
         if len(v) < 8:
-            raise ValueError("password must be at least 8 characters")
+            raise ValueError(
+                "password must be at least 8 characters"
+            )
+
         return v
+
+
+class TeacherUpdateRequest(TeacherBase):
+    pass
 
 
 class TeacherResponse(TeacherBase):
@@ -77,4 +112,6 @@ class TeacherResponse(TeacherBase):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True
+    )

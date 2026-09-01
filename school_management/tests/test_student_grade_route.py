@@ -11,7 +11,7 @@ def test_get_my_grade_success(app, client, student, exam, make_result, student_h
     assert "student_id" not in data
     assert data["average"] == 80
     assert data["grade"] == "A"
-    assert data["remark"] == "Excelent"
+    assert data["remark"] == "Excellent"
 
 
 def test_get_my_grade_no_results(client, student_headers):

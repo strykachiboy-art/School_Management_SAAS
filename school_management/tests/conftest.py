@@ -152,6 +152,9 @@ def json_client(client):
         def patch(self, url, **kwargs):
             return self.c.patch(url, **self._kwargs(kwargs))
 
+        def put(self, url, **kwargs):
+            return self.c.put(url, **self._kwargs(kwargs))
+
         def get(self, url, **kwargs):
             return self.c.get(url, **self._kwargs(kwargs))
 
@@ -182,6 +185,9 @@ def admin_client(client, admin_headers):
 
         def patch(self, url, **kwargs):
             return self.c.patch(url, **self._kwargs(kwargs))
+
+        def put(self, url, **kwargs):
+            return self.c.put(url, **self._kwargs(kwargs))
 
         def get(self, url, **kwargs):
             return self.c.get(url, **self._kwargs(kwargs))
@@ -261,7 +267,7 @@ def make_user(app, school):
     """
     Factory for creating users belonging to the test school.
 
-    Every user is now tenant-aware by default.
+    Every user is tenant-aware by default.
     """
 
     def _make(suffix="1", role="student"):
@@ -287,6 +293,8 @@ def make_user(app, school):
 
 @pytest.fixture
 def make_teacher(app, school):
+    """Factory fixture for creating teachers in the test school."""
+
     def _make(suffix="1"):
         with app.app_context():
             user = User(
@@ -319,6 +327,8 @@ def make_teacher(app, school):
 
 @pytest.fixture
 def make_student(app, school):
+    """Factory fixture for creating students in the test school."""
+
     def _make(suffix="1"):
         with app.app_context():
             user = User(
@@ -351,6 +361,8 @@ def make_student(app, school):
 
 @pytest.fixture
 def make_parent(app, school):
+    """Factory fixture for creating parent/guardian records."""
+
     def _make(suffix="1"):
         with app.app_context():
             user = User(
@@ -386,6 +398,8 @@ def make_parent(app, school):
 
 @pytest.fixture
 def make_classroom(app, school):
+    """Factory fixture for creating classrooms in the test school."""
+
     def _make(suffix="1"):
         with app.app_context():
             classroom = Classroom(
@@ -406,20 +420,40 @@ def make_classroom(app, school):
 
 
 @pytest.fixture
-def make_exam(app, subject, classroom, academic_session, school):
-    def _make(suffix="1"):
+def make_exam(
+    app,
+    subject,
+    classroom,
+    academic_session,
+    school,
+    term,
+):
+    """Factory fixture for creating exams."""
+
+    def _make(
+        suffix="1",
+        subject_obj=subject,
+        classroom_obj=classroom,
+        session_obj=academic_session,
+        term_obj=term,
+        exam_date_val=date(2026, 12, 1),
+        start_time_val=time(9, 0),
+        duration_minutes=90,
+        total_marks=100,
+    ):
         with app.app_context():
             exam = Exam(
+                school_id=school.id,
                 title=f"Exam {suffix}",
                 description="Test description",
-                subject_id=subject.id,
-                classroom_id=classroom.id,
-                session_id=academic_session.id,
-                exam_date=date(2026, 12, 1),
-                start_time=time(9, 0),
-                duration_minutes=90,
-                total_marks=100,
-                school_id=school.id,
+                subject_id=subject_obj.id,
+                classroom_id=classroom_obj.id,
+                session_id=session_obj.id,
+                term_id=term_obj.id if term_obj else None,
+                exam_date=exam_date_val,
+                start_time=start_time_val,
+                duration_minutes=duration_minutes,
+                total_marks=total_marks,
             )
 
             _db.session.add(exam)
@@ -435,6 +469,8 @@ def make_exam(app, subject, classroom, academic_session, school):
 
 @pytest.fixture
 def make_result(app, student, exam, school):
+    """Factory fixture for creating results."""
+
     def _make(
         student_obj=student,
         exam_obj=exam,
@@ -442,10 +478,10 @@ def make_result(app, student, exam, school):
     ):
         with app.app_context():
             result = Result(
+                school_id=school.id,
                 student_id=student_obj.id,
                 exam_id=exam_obj.id,
                 marks_obtained=marks,
-                school_id=school.id,
             )
 
             _db.session.add(result)
@@ -468,19 +504,25 @@ def make_timetable(
     teacher,
     school,
 ):
-    """Factory fixture for creating Timetable entries."""
+    """
+    Factory fixture for creating Timetable entries.
+
+    All related records belong to the same test school by default.
+    """
 
     def _make(
         term_obj=term,
         classroom_obj=classroom,
         subject_obj=subject,
         teacher_obj=teacher,
+        school_id=None,
         day_of_week=DayOfWeek.MONDAY,
         start_time_val=time(8, 0),
         end_time_val=time(9, 0),
     ):
         with app.app_context():
-            tt = Timetable(
+            timetable = Timetable(
+                school_id=school_id or school.id,
                 term_id=term_obj.id,
                 classroom_id=classroom_obj.id,
                 subject_id=subject_obj.id,
@@ -488,16 +530,15 @@ def make_timetable(
                 day_of_week=day_of_week,
                 start_time=start_time_val,
                 end_time=end_time_val,
-                school_id=school.id,
             )
 
-            _db.session.add(tt)
+            _db.session.add(timetable)
             _db.session.commit()
 
-            _db.session.refresh(tt)
-            _db.session.expunge(tt)
+            _db.session.refresh(timetable)
+            _db.session.expunge(timetable)
 
-            return tt
+            return timetable
 
     return _make
 
@@ -513,7 +554,7 @@ def make_attendance(app, student, term, school):
         status=AttendanceStatus.PRESENT,
     ):
         with app.app_context():
-            att = Attendance(
+            attendance = Attendance(
                 student_id=student_obj.id,
                 term_id=term_obj.id,
                 date=date_val,
@@ -521,13 +562,13 @@ def make_attendance(app, student, term, school):
                 school_id=school.id,
             )
 
-            _db.session.add(att)
+            _db.session.add(attendance)
             _db.session.commit()
 
-            _db.session.refresh(att)
-            _db.session.expunge(att)
+            _db.session.refresh(attendance)
+            _db.session.expunge(attendance)
 
-            return att
+            return attendance
 
     return _make
 
@@ -547,8 +588,23 @@ def teacher(make_teacher):
 
 
 @pytest.fixture
+def sample_teacher(teacher):
+    return teacher
+
+
+@pytest.fixture
 def teacher2(make_teacher):
     return make_teacher("2")
+
+
+@pytest.fixture
+def second_teacher(teacher2):
+    """
+    Separate teacher used by timetable classroom-conflict tests.
+
+    This is intentionally different from the default `teacher` fixture.
+    """
+    return teacher2
 
 
 @pytest.fixture
@@ -605,26 +661,26 @@ def classroom(app, school):
 @pytest.fixture
 def academic_session(app, school):
     with app.app_context():
-        sess = AcademicSession(
+        session = AcademicSession(
             name="2026/2027",
             start_date=date(2026, 9, 1),
             end_date=date(2027, 6, 1),
             school_id=school.id,
         )
 
-        _db.session.add(sess)
+        _db.session.add(session)
         _db.session.commit()
 
-        _db.session.refresh(sess)
-        _db.session.expunge(sess)
+        _db.session.refresh(session)
+        _db.session.expunge(session)
 
-        return sess
+        return session
 
 
 @pytest.fixture
 def term(app, academic_session, school):
     with app.app_context():
-        t = Term(
+        term = Term(
             name="First Term",
             academic_session_id=academic_session.id,
             start_date=date(2026, 9, 1),
@@ -632,13 +688,13 @@ def term(app, academic_session, school):
             school_id=school.id,
         )
 
-        _db.session.add(t)
+        _db.session.add(term)
         _db.session.commit()
 
-        _db.session.refresh(t)
-        _db.session.expunge(t)
+        _db.session.refresh(term)
+        _db.session.expunge(term)
 
-        return t
+        return term
 
 
 @pytest.fixture
@@ -653,6 +709,7 @@ def result(make_result):
 
 @pytest.fixture
 def timetable(make_timetable):
+    """Standard timetable fixture."""
     return make_timetable()
 
 

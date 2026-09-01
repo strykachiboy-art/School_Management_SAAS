@@ -6,17 +6,98 @@ from school_app.extensions import db
 from school_app.models.timetable import Timetable
 from school_app.models.subject import Subject
 from school_app.models.classroom import Classroom
+from school_app.models.teacher import Teacher
+from school_app.models.term import Term
 from school_app.modules.audit.services.audit_log_service import create_audit_log
 from school_app.enums.audit import AuditAction
 
 
+# ========================= Helper: School-Scoped Lookup ========================
+
+def _get_timetable_or_404(timetable_id, school_id):
+    timetable = db.session.scalar(
+        db.select(Timetable).where(
+            Timetable.id == timetable_id,
+            Timetable.school_id == school_id,
+        )
+    )
+
+    if timetable is None:
+        abort(404, description=f"Timetable entry with ID {timetable_id} not found.")
+
+    return timetable
+
+
+# ========================= Helper: Validate Related Records ========================
+
+def _validate_school_records(
+    school_id,
+    term_id,
+    classroom_id,
+    subject_id,
+    teacher_id,
+):
+    """
+    Make sure all related records belong to the current school.
+
+    This prevents an admin from school A creating a timetable
+    using records belonging to school B.
+    """
+
+    term = db.session.scalar(
+        db.select(Term).where(
+            Term.id == term_id,
+            Term.school_id == school_id,
+        )
+    )
+    if term is None:
+        abort(404, description=f"Term with ID {term_id} not found.")
+
+    classroom = db.session.scalar(
+        db.select(Classroom).where(
+            Classroom.id == classroom_id,
+            Classroom.school_id == school_id,
+        )
+    )
+    if classroom is None:
+        abort(404, description=f"Classroom with ID {classroom_id} not found.")
+
+    subject = db.session.scalar(
+        db.select(Subject).where(
+            Subject.id == subject_id,
+            Subject.school_id == school_id,
+        )
+    )
+    if subject is None:
+        abort(404, description=f"Subject with ID {subject_id} not found.")
+
+    teacher = db.session.scalar(
+        db.select(Teacher).where(
+            Teacher.id == teacher_id,
+            Teacher.school_id == school_id,
+        )
+    )
+    if teacher is None:
+        abort(404, description=f"Teacher with ID {teacher_id} not found.")
+
+
 # ========================= Helper: Overlap Check ========================
 
-def _check_schedule_conflict(term_id, day_of_week, start_time, end_time, teacher_id=None, classroom_id=None, exclude_id=None):
+def _check_schedule_conflict(
+    school_id,
+    term_id,
+    day_of_week,
+    start_time,
+    end_time,
+    teacher_id=None,
+    classroom_id=None,
+    exclude_id=None,
+):
     if start_time >= end_time:
         abort(400, description="start_time must be earlier than end_time.")
 
     stmt = db.select(Timetable).where(
+        Timetable.school_id == school_id,
         Timetable.term_id == term_id,
         Timetable.day_of_week == day_of_week,
         Timetable.start_time < end_time,
@@ -27,25 +108,54 @@ def _check_schedule_conflict(term_id, day_of_week, start_time, end_time, teacher
         stmt = stmt.where(Timetable.id != exclude_id)
 
     conflict_conditions = []
+
     if teacher_id:
         conflict_conditions.append(Timetable.teacher_id == teacher_id)
+
     if classroom_id:
         conflict_conditions.append(Timetable.classroom_id == classroom_id)
 
     if conflict_conditions:
         stmt = stmt.where(or_(*conflict_conditions))
+
         existing = db.session.scalars(stmt).first()
+
         if existing:
             if existing.teacher_id == teacher_id:
-                abort(409, description="Teacher is already scheduled for another class during this time slot.")
+                abort(
+                    409,
+                    description=(
+                        "Teacher is already scheduled for another class "
+                        "during this time slot."
+                    ),
+                )
+
             if existing.classroom_id == classroom_id:
-                abort(409, description="Classroom is already occupied during this time slot.")
+                abort(
+                    409,
+                    description=(
+                        "Classroom is already occupied during this time slot."
+                    ),
+                )
 
 
 # ========================= Create Timetable ========================
 
-def create_timetable(data, actor_id=None):
+def create_timetable(data, school_id, actor_id=None):
+    """
+    Create a timetable entry scoped to the current school.
+    """
+
+    _validate_school_records(
+        school_id=school_id,
+        term_id=data["term_id"],
+        classroom_id=data["classroom_id"],
+        subject_id=data["subject_id"],
+        teacher_id=data["teacher_id"],
+    )
+
     _check_schedule_conflict(
+        school_id=school_id,
         term_id=data["term_id"],
         day_of_week=data["day_of_week"],
         start_time=data["start_time"],
@@ -55,6 +165,7 @@ def create_timetable(data, actor_id=None):
     )
 
     timetable = Timetable(
+        school_id=school_id,
         term_id=data["term_id"],
         classroom_id=data["classroom_id"],
         subject_id=data["subject_id"],
@@ -63,54 +174,76 @@ def create_timetable(data, actor_id=None):
         start_time=data["start_time"],
         end_time=data["end_time"],
     )
+
     db.session.add(timetable)
-    
+
     try:
-        db.session.flush()  # Forces SQL execution to catch constraints and populate timetable.id
+        db.session.flush()
     except IntegrityError:
         db.session.rollback()
-        abort(400, description="Could not create timetable — check foreign key constraints.")
-    
+        abort(
+            400,
+            description="Could not create timetable — check foreign key constraints.",
+        )
+
     if actor_id:
         create_audit_log(
             actor_id=actor_id,
             action=AuditAction.CREATE,
             resource_type="Timetable",
             resource_id=timetable.id,
-            description=f"Created timetable entry ID {timetable.id} for classroom ID {timetable.classroom_id}",
+            description=(
+                f"Created timetable entry ID {timetable.id} "
+                f"for classroom ID {timetable.classroom_id}"
+            ),
         )
-        
+
     db.session.commit()
 
     return timetable
 
 
-# ========================= Get Single Timetable ========================
+# ========================= Get Single Timetable =========================
 
-def get_timetable(timetable_id):
-    timetable = db.session.get(Timetable, timetable_id)
-    if not timetable:
-        abort(404, description=f"Timetable entry with ID {timetable_id} not found.")
-    return timetable
+def get_timetable(timetable_id, school_id):
+    return _get_timetable_or_404(
+        timetable_id=timetable_id,
+        school_id=school_id,
+    )
 
 
 # ========================= Get Timetables =========================
 
-def get_timetables(search="", term_id=None, classroom_id=None, teacher_id=None, day_of_week=None, page=1, per_page=10):
-    stmt = db.select(Timetable)
+def get_timetables(
+    school_id,
+    search="",
+    term_id=None,
+    classroom_id=None,
+    teacher_id=None,
+    day_of_week=None,
+    page=1,
+    per_page=10,
+):
+    stmt = db.select(Timetable).where(
+        Timetable.school_id == school_id
+    )
 
     if term_id:
         stmt = stmt.where(Timetable.term_id == term_id)
+
     if classroom_id:
         stmt = stmt.where(Timetable.classroom_id == classroom_id)
+
     if teacher_id:
         stmt = stmt.where(Timetable.teacher_id == teacher_id)
+
     if day_of_week:
         stmt = stmt.where(Timetable.day_of_week == day_of_week)
 
     if search:
         stmt = (
-            stmt.join(Timetable.subject)
+            stmt
+            .join(Timetable.subject)
             .join(Timetable.classroom)
             .where(
                 or_(
@@ -120,14 +253,31 @@ def get_timetables(search="", term_id=None, classroom_id=None, teacher_id=None, 
             )
         )
 
-    stmt = stmt.order_by(Timetable.day_of_week.asc(), Timetable.start_time.asc())
-    return db.paginate(stmt, page=page, per_page=per_page, error_out=False)
+    stmt = stmt.order_by(
+        Timetable.day_of_week.asc(),
+        Timetable.start_time.asc(),
+    )
+
+    return db.paginate(
+        stmt,
+        page=page,
+        per_page=per_page,
+        error_out=False,
+    )
 
 
 # ========================= Update Timetable =========================
 
-def update_timetable(timetable_id, data, actor_id=None):
-    timetable = get_timetable(timetable_id)
+def update_timetable(
+    timetable_id,
+    data,
+    school_id,
+    actor_id=None,
+):
+    timetable = _get_timetable_or_404(
+        timetable_id=timetable_id,
+        school_id=school_id,
+    )
 
     old_values = {
         "term_id": timetable.term_id,
@@ -139,15 +289,25 @@ def update_timetable(timetable_id, data, actor_id=None):
         "end_time": timetable.end_time,
     }
 
-    term_id = getattr(data, "term_id", timetable.term_id)
-    classroom_id = getattr(data, "classroom_id", timetable.classroom_id)
-    subject_id = getattr(data, "subject_id", timetable.subject_id)
-    teacher_id = getattr(data, "teacher_id", timetable.teacher_id)
-    day_of_week = getattr(data, "day_of_week", timetable.day_of_week)
-    start_time = getattr(data, "start_time", timetable.start_time)
-    end_time = getattr(data, "end_time", timetable.end_time)
+    # data is a dictionary because the route calls model_dump().
+    term_id = data.get("term_id", timetable.term_id)
+    classroom_id = data.get("classroom_id", timetable.classroom_id)
+    subject_id = data.get("subject_id", timetable.subject_id)
+    teacher_id = data.get("teacher_id", timetable.teacher_id)
+    day_of_week = data.get("day_of_week", timetable.day_of_week)
+    start_time = data.get("start_time", timetable.start_time)
+    end_time = data.get("end_time", timetable.end_time)
+
+    _validate_school_records(
+        school_id=school_id,
+        term_id=term_id,
+        classroom_id=classroom_id,
+        subject_id=subject_id,
+        teacher_id=teacher_id,
+    )
 
     _check_schedule_conflict(
+        school_id=school_id,
         term_id=term_id,
         day_of_week=day_of_week,
         start_time=start_time,
@@ -168,10 +328,15 @@ def update_timetable(timetable_id, data, actor_id=None):
     }
 
     changes = {}
+
     for key, new_val in new_values.items():
         old_val = old_values[key]
-        if new_val is not None and new_val != old_val:
-            changes[key] = {"before": str(old_val), "after": str(new_val)}
+
+        if new_val != old_val:
+            changes[key] = {
+                "before": str(old_val),
+                "after": str(new_val),
+            }
 
     timetable.term_id = term_id
     timetable.classroom_id = classroom_id
@@ -185,7 +350,10 @@ def update_timetable(timetable_id, data, actor_id=None):
         db.session.flush()
     except IntegrityError:
         db.session.rollback()
-        abort(400, description="Could not update timetable — check foreign key constraints.")
+        abort(
+            400,
+            description="Could not update timetable — check foreign key constraints.",
+        )
 
     if changes and actor_id:
         create_audit_log(
@@ -196,7 +364,7 @@ def update_timetable(timetable_id, data, actor_id=None):
             description=f"Updated timetable entry ID {timetable.id}",
             changes=changes,
         )
-        
+
     db.session.commit()
 
     return timetable
@@ -204,10 +372,18 @@ def update_timetable(timetable_id, data, actor_id=None):
 
 # ========================= Delete Timetable =========================
 
-def delete_timetable(timetable_id, actor_id=None):
-    timetable = get_timetable(timetable_id)
+def delete_timetable(
+    timetable_id,
+    school_id,
+    actor_id=None,
+):
+    timetable = _get_timetable_or_404(
+        timetable_id=timetable_id,
+        school_id=school_id,
+    )
+
     classroom_id = timetable.classroom_id
-    
+
     db.session.delete(timetable)
 
     if actor_id:
@@ -216,9 +392,12 @@ def delete_timetable(timetable_id, actor_id=None):
             action=AuditAction.DELETE,
             resource_type="Timetable",
             resource_id=timetable_id,
-            description=f"Deleted timetable entry ID {timetable_id} for classroom ID {classroom_id}",
+            description=(
+                f"Deleted timetable entry ID {timetable_id} "
+                f"for classroom ID {classroom_id}"
+            ),
         )
-        
+
     db.session.commit()
 
     return True
@@ -226,27 +405,75 @@ def delete_timetable(timetable_id, actor_id=None):
 
 # ========================= Get Teacher Timetable =========================
 
-def get_teacher_timetable(teacher_id, term_id=None, day_of_week=None):
-    stmt = db.select(Timetable).where(Timetable.teacher_id == teacher_id)
+def get_teacher_timetable(
+    teacher_id,
+    school_id,
+    term_id=None,
+    day_of_week=None,
+):
+    # Make sure the teacher belongs to the current school.
+    teacher = db.session.scalar(
+        db.select(Teacher).where(
+            Teacher.id == teacher_id,
+            Teacher.school_id == school_id,
+        )
+    )
+
+    if teacher is None:
+        abort(404, description=f"Teacher with ID {teacher_id} not found.")
+
+    stmt = db.select(Timetable).where(
+        Timetable.school_id == school_id,
+        Timetable.teacher_id == teacher_id,
+    )
 
     if term_id:
         stmt = stmt.where(Timetable.term_id == term_id)
+
     if day_of_week:
         stmt = stmt.where(Timetable.day_of_week == day_of_week)
 
-    stmt = stmt.order_by(Timetable.day_of_week.asc(), Timetable.start_time.asc())
+    stmt = stmt.order_by(
+        Timetable.day_of_week.asc(),
+        Timetable.start_time.asc(),
+    )
+
     return db.session.scalars(stmt).all()
 
 
 # ========================= Get Classroom Timetable =========================
 
-def get_classroom_timetable(classroom_id, term_id=None, day_of_week=None):
-    stmt = db.select(Timetable).where(Timetable.classroom_id == classroom_id)
+def get_classroom_timetable(
+    classroom_id,
+    school_id,
+    term_id=None,
+    day_of_week=None,
+):
+    # Make sure the classroom belongs to the current school.
+    classroom = db.session.scalar(
+        db.select(Classroom).where(
+            Classroom.id == classroom_id,
+            Classroom.school_id == school_id,
+        )
+    )
+
+    if classroom is None:
+        abort(404, description=f"Classroom with ID {classroom_id} not found.")
+
+    stmt = db.select(Timetable).where(
+        Timetable.school_id == school_id,
+        Timetable.classroom_id == classroom_id,
+    )
 
     if term_id:
         stmt = stmt.where(Timetable.term_id == term_id)
+
     if day_of_week:
         stmt = stmt.where(Timetable.day_of_week == day_of_week)
 
-    stmt = stmt.order_by(Timetable.day_of_week.asc(), Timetable.start_time.asc())
+    stmt = stmt.order_by(
+        Timetable.day_of_week.asc(),
+        Timetable.start_time.asc(),
+    )
+
     return db.session.scalars(stmt).all()
