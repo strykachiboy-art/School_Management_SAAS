@@ -31,6 +31,7 @@ from school_app.models.teacher import Teacher
 from school_app.models.term import Term
 from school_app.models.timetable import Timetable
 from school_app.models.user import User
+from school_app.models.onboarding_progress import OnboardingProgress
 
 
 # ======================================================================
@@ -1403,3 +1404,27 @@ def user_with_password(app, school):
             "Accept": "application/json",
         },
     }
+    
+    
+#==================================================================================================
+#                        Onboarding progress fixtures
+#==================================================================================================
+
+@pytest.fixture
+def make_onboarding_progress(app, school):
+
+    def _make(**overrides):
+        with app.app_context():
+            progress = OnboardingProgress(school_id=school.id, **overrides)
+            _db.session.add(progress)
+            _db.session.commit()
+            _db.session.refresh(progress)
+            _db.session.expunge(progress)
+            return progress
+
+    return _make
+
+
+@pytest.fixture
+def onboarding_progress(make_onboarding_progress):
+    return make_onboarding_progress()

@@ -59,7 +59,7 @@ def create_app(config: Optional[dict] = None) -> Flask:
     from school_app.modules.admin_reports.routes.admin_reports_route import reports_bp
     from school_app.modules.school_fees.routes.school_fees_route import school_fees_bp
     from school_app.modules.grading.routes.report_card_route import report_card_bp
-    
+    from school_app.modules.onboarding.routes.onboarding_route import onboarding_bp
     
     app.register_blueprint(subject_bp, url_prefix="/subjects")
     app.register_blueprint(classroom_bp, url_prefix="/classrooms")
@@ -96,6 +96,8 @@ def create_app(config: Optional[dict] = None) -> Flask:
     app.register_blueprint(reports_bp, url_prefix="/admin/reports")
     app.register_blueprint(school_fees_bp, url_prefix="/fees")
     app.register_blueprint(report_card_bp, url_prefix="/report-cards")
+    app.register_blueprint(onboarding_bp, url_prefix="/onboarding")
+    
     
     register_error_handlers(app)
 

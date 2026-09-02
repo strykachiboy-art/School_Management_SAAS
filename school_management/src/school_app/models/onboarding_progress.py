@@ -17,6 +17,11 @@ class OnboardingProgress(db.Model):
     __table_args__ = {"extend_existing": True}
 
     id = db.Column(db.Integer, primary_key=True)
+    admin_user_id = db.Column(
+    db.Integer,
+    db.ForeignKey("users.id", ondelete="SET NULL"),
+    nullable=True,
+)
     school_id = db.Column(
         db.Integer,
         db.ForeignKey("schools.id", ondelete="CASCADE"),
@@ -42,7 +47,8 @@ class OnboardingProgress(db.Model):
         default=_utcnow,
         onupdate=_utcnow,
     )
-
+    
+    admin_user = db.relationship("User", foreign_keys=[admin_user_id])
     school = db.relationship("School", backref=db.backref("onboarding_progress", uselist=False))
 
     def __repr__(self):
