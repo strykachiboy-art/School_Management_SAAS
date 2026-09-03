@@ -34,6 +34,10 @@ class School(db.Model):
     )
     
     settings = db.relationship("SchoolSettings", uselist=False, back_populates="school", cascade="all, delete-orphan")
-
+    subscription = db.relationship(
+    "Subscription", back_populates="school",
+    uselist=False, cascade="all, delete-orphan",
+)
+    
     def __repr__(self):
         return f"<School id={self.id} name='{self.name}' slug='{self.slug}'>"

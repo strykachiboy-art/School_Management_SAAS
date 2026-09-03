@@ -9,12 +9,17 @@ def test_create_notification_as_admin(client, admin_headers, student):
         "title": "Exam Scheduled",
         "message": "Your exam is on Monday.",
         "notification_type": "EXAM",
+        "related_entity_type": "Exam",
+        "related_entity_id": 17,
     }, headers=admin_headers)
     assert resp.status_code == 201
     data = resp.get_json()
     assert data["recipient_id"] == student.user_id
     assert data["is_read"] is False
     assert data["read_at"] is None
+    assert data["related_entity_type"] == "Exam"
+    assert data["related_entity_id"] == 17
+    assert db.session.get(Notification, data["id"]).school_id == student.school_id
 
 
 def test_create_notification_forbidden_for_non_admin(client, student_headers, student):

@@ -19,6 +19,8 @@ def create_app():
     return app
 
 
+# $env:FLASK_APP = "run.py"
+# flask --app run.py db init
 
 # <link rel="stylesheet" href="{{ url_for('static', filename='css/output.css') }}">
 

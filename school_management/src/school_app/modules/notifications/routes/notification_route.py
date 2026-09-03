@@ -1,10 +1,11 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
-from school_app.extensions import limiter
+from school_app.extensions import db, limiter
 from pydantic import ValidationError
 
 from school_app.decorators import role_required
 from school_app.enums.role import Role
+from school_app.models.user import User
 from school_app.modules.notifications.requests.notification_request import CreateNotificationRequest
 from school_app.modules.notifications.services.notification_service import (
     create_notification,
@@ -32,6 +33,8 @@ def serialize_notification(n):
         "is_read": n.is_read,
         "created_at": n.created_at.isoformat(),
         "read_at": n.read_at.isoformat() if n.read_at else None,
+        "related_entity_type": n.related_entity_type,
+        "related_entity_id": n.related_entity_id,
     }
 
 
@@ -128,12 +131,17 @@ def create_notification_route():
     try:
         # Validate incoming data using Pydantic request schema
         validated_data = CreateNotificationRequest(**data)
+        claims = get_jwt()
+        actor = db.session.get(User, int(get_jwt_identity()))
         
         notification = create_notification(
             recipient_id=validated_data.recipient_id,
             title=validated_data.title,
             message=validated_data.message,
-            notification_type=validated_data.notification_type
+            notification_type=validated_data.notification_type,
+            school_id=claims.get("school_id") or (actor.school_id if actor else None),
+            related_entity_type=validated_data.related_entity_type,
+            related_entity_id=validated_data.related_entity_id,
         )
         
         return jsonify(serialize_notification(notification)), 201

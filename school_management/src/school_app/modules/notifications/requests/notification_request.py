@@ -7,6 +7,8 @@ class CreateNotificationRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=255)
     message: str = Field(..., min_length=1)
     notification_type: NotificationType
+    related_entity_type: str | None = None
+    related_entity_id: int | None = None
 
     @field_validator("title", "message")
     @classmethod

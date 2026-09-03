@@ -286,6 +286,9 @@ def _apply_confirmed_payment_to_invoice(school_id: int, invoice: Invoice, paymen
             title="Payment Received",
             message=f"Payment of {payment.amount} recorded against your fees.",
             notification_type=NotificationType.SCHOOL_FEES,
+            school_id=school_id,
+            related_entity_type="Invoice",
+            related_entity_id=invoice.id,
         )
 
 

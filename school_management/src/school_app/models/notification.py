@@ -41,6 +41,8 @@ class Notification(db.Model):
     read_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=_utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
+    related_entity_type = db.Column(db.String(50), nullable=True)
+    related_entity_id = db.Column(db.Integer, nullable=True)
 
     # Unidirectional relationships
     school = db.relationship("School", foreign_keys=[school_id])

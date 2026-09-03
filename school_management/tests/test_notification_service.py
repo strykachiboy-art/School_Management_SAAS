@@ -31,6 +31,22 @@ def test_create_notification_persists(student):
     assert db.session.get(Notification,n.id) is not None
 
 
+def test_create_notification_persists_school_and_related_entity(student, school):
+    n = create_notification(
+        recipient_id=student.user_id,
+        title="Result Published",
+        message="Your result is ready",
+        notification_type=NotificationType.RESULT,
+        school_id=school.id,
+        related_entity_type="ReportCard",
+        related_entity_id=42,
+    )
+
+    assert n.school_id == school.id
+    assert n.related_entity_type == "ReportCard"
+    assert n.related_entity_id == 42
+
+
 def test_create_notification_invalid_recipient_raises():
     with pytest.raises(InvalidRecipientError):
         create_notification(

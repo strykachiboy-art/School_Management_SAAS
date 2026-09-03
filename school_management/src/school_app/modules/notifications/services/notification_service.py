@@ -7,12 +7,31 @@ from school_app.extensions import db
 from school_app.models.notification import Notification
 from school_app.enums.notification import NotificationType
 from school_app.models.user import User
+from school_app.models.school_settings import SchoolSettings
 from school_app.modules.audit.services.audit_log_service import create_audit_log
 from school_app.enums.audit import AuditAction
+from school_app.utils.email import send_email
 
 
 class InvalidRecipientError(Exception):
     """Raised when recipient_id doesn't correspond to a real user."""
+
+
+def _maybe_send_email(recipient_id: int, school_id, notification_type, title, message):
+    if school_id is None:
+        return
+    settings = db.session.execute(
+        db.select(SchoolSettings).filter_by(school_id=school_id)
+    ).scalar_one_or_none()
+    if settings is None:
+        return
+    prefs = (settings.notification_preferences or {}).get(notification_type.value, {})
+    if not prefs.get("email"):
+        return
+    user = db.session.get(User, recipient_id)
+    if user and user.email:
+        send_email(user.email, title, message)
+
 
 def create_notification(
     recipient_id: int,
@@ -20,6 +39,9 @@ def create_notification(
     message: str,
     notification_type: NotificationType,
     actor_id: Optional[int] = None,
+    school_id: Optional[int] = None,
+    related_entity_type: Optional[str] = None,
+    related_entity_id: Optional[int] = None,
 ) -> Notification:
     user = db.session.get(User, recipient_id)
     if not user:
@@ -31,6 +53,9 @@ def create_notification(
         message=message,
         notification_type=notification_type,
         is_read=False,
+        school_id=school_id,
+        related_entity_type=related_entity_type,
+        related_entity_id=related_entity_id,
     )
     db.session.add(notification)
     try:
@@ -48,8 +73,10 @@ def create_notification(
             resource_id=notification.id,
             description=f"Created notification for user ID {recipient_id}: {title}",
         )
-        
+
     db.session.commit()
+
+    _maybe_send_email(recipient_id, school_id, notification_type, title, message)
 
     return notification
 
@@ -82,7 +109,7 @@ def mark_notification_as_read(notification_id: int, recipient_id: int, actor_id:
     notification = get_notification(notification_id, recipient_id)
     if notification is None:
         return None
-        
+
     if not notification.is_read:
         notification.is_read = True
         notification.read_at = datetime.now(timezone.utc)
@@ -98,7 +125,7 @@ def mark_notification_as_read(notification_id: int, recipient_id: int, actor_id:
                 description=f"Marked notification ID {notification.id} as read",
                 changes={"is_read": {"before": False, "after": True}}
             )
-            
+
         db.session.commit()
 
     return notification
@@ -122,7 +149,7 @@ def mark_all_notifications_as_read(recipient_id: int, actor_id: Optional[int] = 
             resource_id=None,
             description=f"Marked all unread notifications ({updated}) as read for user ID {recipient_id}",
         )
-        
+
     db.session.commit()
 
     return updated
@@ -132,7 +159,7 @@ def delete_notification(notification_id: int, recipient_id: int, actor_id: Optio
     notification = get_notification(notification_id, recipient_id)
     if notification is None:
         return False
-        
+
     db.session.delete(notification)
 
     effective_actor_id = actor_id if actor_id is not None else recipient_id
@@ -144,7 +171,7 @@ def delete_notification(notification_id: int, recipient_id: int, actor_id: Optio
             resource_id=notification_id,
             description=f"Deleted notification ID {notification_id}",
         )
-        
+
     db.session.commit()
 
     return True
@@ -153,9 +180,21 @@ def delete_notification(notification_id: int, recipient_id: int, actor_id: Optio
 # --- reusable entry points other services should call directly ---
 
 def notify_user(
-    recipient_id: int, title: str, message: str, notification_type: NotificationType, actor_id: Optional[int] = None
+    recipient_id: int,
+    title: str,
+    message: str,
+    notification_type: NotificationType,
+    actor_id: Optional[int] = None,
+    school_id: Optional[int] = None,
+    related_entity_type: Optional[str] = None,
+    related_entity_id: Optional[int] = None,
 ) -> Notification:
-    return create_notification(recipient_id, title, message, notification_type, actor_id=actor_id)
+    return create_notification(
+        recipient_id, title, message, notification_type,
+        actor_id=actor_id, school_id=school_id,
+        related_entity_type=related_entity_type,
+        related_entity_id=related_entity_id,
+    )
 
 
 def notify_users(
@@ -164,6 +203,9 @@ def notify_users(
     message: str,
     notification_type: NotificationType,
     actor_id: Optional[int] = None,
+    school_id: Optional[int] = None,
+    related_entity_type: Optional[str] = None,
+    related_entity_id: Optional[int] = None,
 ) -> list[Notification]:
     if not recipient_ids:
         return []
@@ -175,13 +217,16 @@ def notify_users(
             message=message,
             notification_type=notification_type,
             is_read=False,
+            school_id=school_id,
+            related_entity_type=related_entity_type,
+            related_entity_id=related_entity_id,
         )
         for rid in recipient_ids
     ]
-    
+
     # return_defaults=True populates the primary key IDs back onto the instances
     db.session.bulk_save_objects(notifications, return_defaults=True)
-    
+
     try:
         db.session.flush()
     except IntegrityError:
@@ -197,7 +242,10 @@ def notify_users(
             description=f"Bulk sent notifications to {len(recipient_ids)} recipient(s): {title}",
             changes={"recipient_ids": list(recipient_ids)}
         )
-        
+
     db.session.commit()
+
+    for rid in recipient_ids:
+        _maybe_send_email(rid, school_id, notification_type, title, message)
 
     return notifications
