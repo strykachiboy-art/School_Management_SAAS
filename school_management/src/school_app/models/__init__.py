@@ -31,3 +31,4 @@ from school_app.models.promotion_rule import PromotionRule
 from school_app.models.reportcard import ReportCard
 from school_app.models.school import School
 from school_app.models.onboarding_progress import OnboardingProgress
+from school_app.models.school_settings import SchoolSettings

@@ -32,6 +32,7 @@ from school_app.models.term import Term
 from school_app.models.timetable import Timetable
 from school_app.models.user import User
 from school_app.models.onboarding_progress import OnboardingProgress
+from school_app.models.school_settings import SchoolSettings
 
 
 # ======================================================================
@@ -1406,9 +1407,9 @@ def user_with_password(app, school):
     }
     
     
-#==================================================================================================
-#                        Onboarding progress fixtures
-#==================================================================================================
+#==========================================================================
+# 20.  Onboarding progress fixtures
+#==========================================================================
 
 @pytest.fixture
 def make_onboarding_progress(app, school):
@@ -1428,3 +1429,35 @@ def make_onboarding_progress(app, school):
 @pytest.fixture
 def onboarding_progress(make_onboarding_progress):
     return make_onboarding_progress()
+
+
+# ======================================================================
+# 21. SCHOOL SETTINGS
+# ======================================================================
+
+@pytest.fixture
+def make_school_settings(app, school):
+
+    def _make(**overrides):
+
+        with app.app_context():
+
+            settings = SchoolSettings(
+                school_id=school.id,
+                **overrides,
+            )
+
+            _db.session.add(settings)
+            _db.session.commit()
+
+            _db.session.refresh(settings)
+            _db.session.expunge(settings)
+
+            return settings
+
+    return _make
+
+
+@pytest.fixture
+def school_settings(make_school_settings):
+    return make_school_settings()
